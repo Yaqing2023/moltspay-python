@@ -1,13 +1,18 @@
 [project]
 name = "moltspay"
-version = "0.1.0"
-description = "Python SDK for MoltsPay - Agent-to-Agent Payments"
+version = "0.1.1"
+description = "Python SDK for MoltsPay - Agent-to-Agent Payments. LangChain compatible."
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
     {name = "Zen7 Labs", email = "zen7@moltspay.com"}
 ]
-keywords = ["ai", "agent", "payments", "crypto", "usdc", "x402"]
+keywords = [
+    "ai", "agent", "payments", "crypto", "usdc", "x402",
+    "langchain", "langchain-tool", "llm", "gpt", "openai",
+    "ai-agent", "autonomous-agent", "agentic", "web3",
+    "blockchain", "base", "coinbase", "gasless"
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -17,6 +22,9 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Office/Business :: Financial :: Point-Of-Sale",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 requires-python = ">=3.9"
 dependencies = [
