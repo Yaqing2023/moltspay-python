@@ -1,0 +1,1 @@
+"""MoltsPay tests."""
