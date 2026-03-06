@@ -37,6 +37,7 @@ print(result.result)
 - **Spending limits** - Set per-transaction and daily limits
 - **x402 protocol** - Native support for HTTP 402 payment flow
 - **Gasless payments** - Uses EIP-2612 permits, no ETH needed for clients
+- **LangChain integration** - Use as a tool in LangChain agents
 
 ## Wallet Management
 
@@ -88,6 +89,43 @@ except LimitExceeded as e:
     print(f"Exceeds {e.limit_type} limit: {e.amount} > {e.limit}")
 except PaymentError as e:
     print(f"Payment failed: {e}")
+```
+
+## LangChain Integration
+
+Use MoltsPay as a tool in your LangChain agents:
+
+```bash
+pip install moltspay[langchain]
+```
+
+```python
+from langchain.agents import initialize_agent, AgentType
+from langchain_openai import ChatOpenAI
+from moltspay.integrations.langchain import MoltsPayTool
+
+llm = ChatOpenAI(model="gpt-4")
+tools = [MoltsPayTool()]
+
+agent = initialize_agent(
+    tools, 
+    llm, 
+    agent=AgentType.OPENAI_FUNCTIONS,
+    verbose=True
+)
+
+# Agent can now pay for AI services!
+result = agent.run("Generate a video of a cat dancing on the beach")
+```
+
+Two tools available:
+- `MoltsPayTool` - Pay for and execute services
+- `MoltsPayDiscoverTool` - Discover available services and prices
+
+```python
+from moltspay.integrations.langchain import get_moltspay_tools
+
+tools = get_moltspay_tools()  # Returns both tools
 ```
 
 ## CLI Compatibility
