@@ -127,6 +127,18 @@ class MoltsPay:
         if token not in ("USDC", "USDT"):
             raise PaymentError(f"Unsupported token: {token}. Use USDC or USDT.")
         
+        # USDT requires gas for on-chain approval (no EIP-2612 support)
+        if token == "USDT":
+            bal = self.balance()
+            if bal.native < 0.0001:
+                raise PaymentError(
+                    f"USDT requires ETH for gas (~$0.01 on Base). "
+                    f"Your ETH balance: {bal.native:.6f} ETH. "
+                    f"Please add a small amount of ETH to your wallet, or use USDC (gasless)."
+                )
+            import warnings
+            warnings.warn("USDT requires gas (~$0.01). USDC is gasless and recommended.", UserWarning)
+        
         # Discover service to get price
         services = self.discover(service_url)
         service = next((s for s in services if s.id == service_id), None)
@@ -271,6 +283,18 @@ class AsyncMoltsPay:
         token = token.upper()
         if token not in ("USDC", "USDT"):
             raise PaymentError(f"Unsupported token: {token}. Use USDC or USDT.")
+        
+        # USDT requires gas for on-chain approval (no EIP-2612 support)
+        if token == "USDT":
+            bal = await self.balance()
+            if bal.native < 0.0001:
+                raise PaymentError(
+                    f"USDT requires ETH for gas (~$0.01 on Base). "
+                    f"Your ETH balance: {bal.native:.6f} ETH. "
+                    f"Please add a small amount of ETH to your wallet, or use USDC (gasless)."
+                )
+            import warnings
+            warnings.warn("USDT requires gas (~$0.01). USDC is gasless and recommended.", UserWarning)
         
         services = await self.discover(service_url)
         service = next((s for s in services if s.id == service_id), None)
