@@ -4,7 +4,7 @@ from typing import Any, Optional, List
 
 from .wallet import Wallet
 from .x402 import X402Client, AsyncX402Client
-from .models import Service, Balance, Limits, PaymentResult
+from .models import Service, Balance, Limits, PaymentResult, TokenSymbol
 from .exceptions import InsufficientFunds, LimitExceeded, PaymentError
 
 
@@ -79,6 +79,7 @@ class MoltsPay:
         return Balance(
             address=self._wallet.address,
             usdc=0.0,  # Placeholder
+            usdt=0.0,  # Placeholder
             eth=0.0,   # Placeholder
             chain=self._chain,
         )
@@ -101,6 +102,7 @@ class MoltsPay:
         self,
         service_url: str,
         service_id: str,
+        token: str = "USDC",
         **params,
     ) -> PaymentResult:
         """
@@ -109,22 +111,33 @@ class MoltsPay:
         Args:
             service_url: Base URL of the service provider
             service_id: Service ID to call
+            token: Token to pay with ("USDC" or "USDT", default: "USDC")
             **params: Service parameters
         
         Returns:
             PaymentResult with service response
         
         Raises:
-            InsufficientFunds: Not enough USDC
+            InsufficientFunds: Not enough balance
             LimitExceeded: Transaction exceeds limits
             PaymentError: Payment or service failed
         """
+        # Normalize token
+        token = token.upper()
+        if token not in ("USDC", "USDT"):
+            raise PaymentError(f"Unsupported token: {token}. Use USDC or USDT.")
+        
         # Discover service to get price
         services = self.discover(service_url)
         service = next((s for s in services if s.id == service_id), None)
         
         if not service:
             raise PaymentError(f"Service not found: {service_id}")
+        
+        # Check if token is accepted
+        accepted = service.accepts
+        if token not in accepted:
+            raise PaymentError(f"Token {token} not accepted. Accepted: {', '.join(accepted)}")
         
         # Check limits
         ok, error = self._wallet.check_limits(service.price)
@@ -141,6 +154,7 @@ class MoltsPay:
                 service_id,
                 params,
                 self._wallet._account,
+                token=token,
             )
             
             # Record spend on success
@@ -149,6 +163,7 @@ class MoltsPay:
             return PaymentResult(
                 success=True,
                 amount=service.price,
+                token=token,
                 service_id=service_id,
                 result=result,
             )
@@ -159,6 +174,7 @@ class MoltsPay:
             return PaymentResult(
                 success=False,
                 amount=service.price,
+                token=token,
                 service_id=service_id,
                 error=str(e),
             )
@@ -222,6 +238,7 @@ class AsyncMoltsPay:
         return Balance(
             address=self._wallet.address,
             usdc=0.0,
+            usdt=0.0,
             eth=0.0,
             chain=self._chain,
         )
@@ -238,14 +255,33 @@ class AsyncMoltsPay:
         self,
         service_url: str,
         service_id: str,
+        token: str = "USDC",
         **params,
     ) -> PaymentResult:
-        """Pay for and call a service (async)."""
+        """
+        Pay for and call a service (async).
+        
+        Args:
+            service_url: Base URL of the service provider
+            service_id: Service ID to call
+            token: Token to pay with ("USDC" or "USDT", default: "USDC")
+            **params: Service parameters
+        """
+        # Normalize token
+        token = token.upper()
+        if token not in ("USDC", "USDT"):
+            raise PaymentError(f"Unsupported token: {token}. Use USDC or USDT.")
+        
         services = await self.discover(service_url)
         service = next((s for s in services if s.id == service_id), None)
         
         if not service:
             raise PaymentError(f"Service not found: {service_id}")
+        
+        # Check if token is accepted
+        accepted = service.accepts
+        if token not in accepted:
+            raise PaymentError(f"Token {token} not accepted. Accepted: {', '.join(accepted)}")
         
         ok, error = self._wallet.check_limits(service.price)
         if not ok:
@@ -260,6 +296,7 @@ class AsyncMoltsPay:
                 service_id,
                 params,
                 self._wallet._account,
+                token=token,
             )
             
             self._wallet.record_spend(service.price)
@@ -267,6 +304,7 @@ class AsyncMoltsPay:
             return PaymentResult(
                 success=True,
                 amount=service.price,
+                token=token,
                 service_id=service_id,
                 result=result,
             )
@@ -277,6 +315,7 @@ class AsyncMoltsPay:
             return PaymentResult(
                 success=False,
                 amount=service.price,
+                token=token,
                 service_id=service_id,
                 error=str(e),
             )

@@ -1,7 +1,10 @@
 """Pydantic models for MoltsPay."""
 
-from typing import Optional, Any
+from typing import Optional, Any, List, Literal
 from pydantic import BaseModel
+
+# Supported token types
+TokenSymbol = Literal["USDC", "USDT"]
 
 
 class Service(BaseModel):
@@ -11,13 +14,20 @@ class Service(BaseModel):
     description: Optional[str] = None
     price: float
     currency: str = "USDC"
+    accepted_currencies: Optional[List[str]] = None  # ["USDC", "USDT"]
     parameters: Optional[dict] = None
+    
+    @property
+    def accepts(self) -> List[str]:
+        """Get list of accepted currencies (defaults to [currency])."""
+        return self.accepted_currencies or [self.currency]
 
 
 class Balance(BaseModel):
     """Wallet balance."""
     address: str
     usdc: float
+    usdt: float = 0.0
     eth: float
     chain: str = "base"
 
@@ -38,6 +48,7 @@ class PaymentResult(BaseModel):
     success: bool
     tx_hash: Optional[str] = None
     amount: float
+    token: str = "USDC"  # Token used for payment (USDC or USDT)
     service_id: str
     result: Optional[Any] = None
     error: Optional[str] = None

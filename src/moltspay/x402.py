@@ -122,9 +122,27 @@ def sign_eip3009_authorization(
 def build_payment_payload(
     account: Account,
     payment_required: PaymentRequired,
+    token: str = "USDC",
 ) -> str:
     """Build and encode x402 payment payload."""
-    req = payment_required.accepts[0]
+    # Find the requirement matching the requested token
+    req = None
+    for accept in payment_required.accepts:
+        # Check if asset matches token (USDC or USDT)
+        asset = accept.get("asset", "").lower()
+        token_name = accept.get("extra", {}).get("name", "")
+        
+        if token == "USDC" and ("usdc" in asset or "USD Coin" in token_name):
+            req = accept
+            break
+        elif token == "USDT" and ("usdt" in asset or "Tether" in token_name):
+            req = accept
+            break
+    
+    # Fall back to first if no match found
+    if not req:
+        req = payment_required.accepts[0]
+    
     chain_id = int(req["network"].split(":")[1])
     
     payment = sign_eip3009_authorization(
@@ -182,6 +200,7 @@ class X402Client:
                     description=svc.get("description"),
                     price=float(svc.get("price", 0)),
                     currency=svc.get("currency", "USDC"),
+                    accepted_currencies=svc.get("acceptedCurrencies"),
                     parameters=svc.get("parameters"),
                 ))
             return services
@@ -212,6 +231,7 @@ class X402Client:
         service_id: str,
         params: dict,
         account: Account,
+        token: str = "USDC",
     ) -> Any:
         """
         Full x402 flow: call, get 402, sign payment, retry.
@@ -221,6 +241,7 @@ class X402Client:
             service_id: Service ID to call
             params: Service parameters
             account: eth-account Account for signing
+            token: Token to pay with ("USDC" or "USDT")
         
         Returns:
             Service response data
@@ -237,8 +258,8 @@ class X402Client:
         # Parse 402 response
         payment_req = parse_402_response(response)
         
-        # Build and sign payment
-        payment_header = build_payment_payload(account, payment_req)
+        # Build and sign payment with specified token
+        payment_header = build_payment_payload(account, payment_req, token=token)
         
         # Retry with payment
         response = self.call_service(base_url, service_id, params, payment_header)
@@ -283,6 +304,7 @@ class AsyncX402Client:
                     description=svc.get("description"),
                     price=float(svc.get("price", 0)),
                     currency=svc.get("currency", "USDC"),
+                    accepted_currencies=svc.get("acceptedCurrencies"),
                     parameters=svc.get("parameters"),
                 ))
             return services
@@ -313,6 +335,7 @@ class AsyncX402Client:
         service_id: str,
         params: dict,
         account: Account,
+        token: str = "USDC",
     ) -> Any:
         """Full x402 flow (async version)."""
         response = await self.call_service(base_url, service_id, params)
@@ -323,7 +346,7 @@ class AsyncX402Client:
             return response.json()
         
         payment_req = parse_402_response(response)
-        payment_header = build_payment_payload(account, payment_req)
+        payment_header = build_payment_payload(account, payment_req, token=token)
         
         response = await self.call_service(base_url, service_id, params, payment_header)
         
