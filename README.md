@@ -1,11 +1,32 @@
 # MoltsPay Python SDK
 
-Python SDK for MoltsPay - Agent-to-Agent Payments.
+[![PyPI version](https://img.shields.io/pypi/v/moltspay.svg)](https://pypi.org/project/moltspay/)
+[![Python versions](https://img.shields.io/pypi/pyversions/moltspay.svg)](https://pypi.org/project/moltspay/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+
+**Python SDK for MoltsPay - Agent-to-Agent Payments.**
+
+MoltsPay enables AI agents to pay each other for services using the [x402 protocol](https://www.x402.org/) - HTTP-native payments with USDC stablecoins. No gas fees, no complex wallet management.
+
+## What is MoltsPay?
+
+MoltsPay is blockchain payment infrastructure designed for AI agents. It solves a fundamental problem: **how do autonomous AI agents pay for services?**
+
+- 🤖 **Agent-to-Agent Commerce** - AI agents can autonomously discover, pay for, and use services
+- 💨 **Gasless Payments** - Uses EIP-2612 permits, no ETH needed
+- 🔗 **x402 Protocol** - HTTP 402 Payment Required - payments as native HTTP flow
+- 🔒 **Spending Limits** - Set per-transaction and daily limits for safety
+- 🦜 **LangChain Ready** - Drop-in tools for LangChain agents
 
 ## Installation
 
 ```bash
 pip install moltspay
+```
+
+For LangChain integration:
+```bash
+pip install moltspay[langchain]
 ```
 
 ## Quick Start
@@ -17,7 +38,7 @@ from moltspay import MoltsPay
 client = MoltsPay()
 print(f"Wallet address: {client.address}")
 
-# Discover services
+# Discover services from a provider
 services = client.discover("https://juai8.com/zen7")
 for svc in services:
     print(f"{svc.id}: {svc.price} {svc.currency}")
@@ -33,30 +54,40 @@ print(result.result)
 
 ## Features
 
-- **Auto wallet management** - Creates wallet on first run, compatible with Node.js CLI
-- **Spending limits** - Set per-transaction and daily limits
-- **x402 protocol** - Native support for HTTP 402 payment flow
-- **Gasless payments** - Uses EIP-2612 permits, no ETH needed for clients
-- **LangChain integration** - Use as a tool in LangChain agents
+### Auto Wallet Management
 
-## Wallet Management
+Wallet is automatically created on first run and stored at `~/.moltspay/wallet.json`. Compatible with Node.js CLI.
 
 ```python
 from moltspay import MoltsPay
 
-# Wallet auto-created at ~/.moltspay/wallet.json
+client = MoltsPay()
+print(f"Address: {client.address}")
+print(f"Balance: {client.balance()} USDC")
+```
+
+### Spending Limits
+
+Control your agent's spending with built-in limits:
+
+```python
+from moltspay import MoltsPay
+
 client = MoltsPay()
 
-# Check limits
+# Check current limits
 limits = client.limits()
 print(f"Max per tx: {limits.max_per_tx}")
+print(f"Max per day: {limits.max_per_day}")
 print(f"Spent today: {limits.spent_today}")
 
 # Update limits
 client.set_limits(max_per_tx=20, max_per_day=200)
 ```
 
-## Async Support
+### Async Support
+
+Full async/await support for high-performance applications:
 
 ```python
 import asyncio
@@ -74,7 +105,9 @@ async def main():
 asyncio.run(main())
 ```
 
-## Error Handling
+### Error Handling
+
+Comprehensive exception types for robust error handling:
 
 ```python
 from moltspay import MoltsPay, InsufficientFunds, LimitExceeded, PaymentError
@@ -93,11 +126,7 @@ except PaymentError as e:
 
 ## LangChain Integration
 
-Use MoltsPay as a tool in your LangChain agents:
-
-```bash
-pip install moltspay[langchain]
-```
+Use MoltsPay as tools in your LangChain agents - let your AI autonomously pay for services!
 
 ```python
 from langchain.agents import initialize_agent, AgentType
@@ -118,9 +147,9 @@ agent = initialize_agent(
 result = agent.run("Generate a video of a cat dancing on the beach")
 ```
 
-Two tools available:
-- `MoltsPayTool` - Pay for and execute services
-- `MoltsPayDiscoverTool` - Discover available services and prices
+### Available Tools
+
+Two tools available for different use cases:
 
 ```python
 from moltspay.integrations.langchain import get_moltspay_tools
@@ -128,9 +157,14 @@ from moltspay.integrations.langchain import get_moltspay_tools
 tools = get_moltspay_tools()  # Returns both tools
 ```
 
+| Tool | Description |
+|------|-------------|
+| `MoltsPayTool` | Pay for and execute services |
+| `MoltsPayDiscoverTool` | Discover available services and prices |
+
 ## CLI Compatibility
 
-Wallet format is compatible with Node.js CLI:
+Wallet format is fully compatible with the Node.js CLI:
 
 ```bash
 # Create wallet with Node CLI
@@ -140,10 +174,46 @@ npx moltspay init --chain base
 python -c "from moltspay import MoltsPay; print(MoltsPay().address)"
 ```
 
+## How x402 Works
+
+```
+Your Agent                     Service Provider              Blockchain
+    │                               │                           │
+    │ Request service               │                           │
+    │ ──────────────────────────>   │                           │
+    │                               │                           │
+    │ 402 + price + wallet          │                           │
+    │ <──────────────────────────   │                           │
+    │                               │                           │
+    │ [Sign payment - NO GAS]       │                           │
+    │                               │                           │
+    │ Request + signed payment      │                           │
+    │ ──────────────────────────>   │ Verify & settle           │
+    │                               │ ─────────────────────────>│
+    │                               │                           │
+    │ 200 OK + result               │                           │
+    │ <──────────────────────────   │                           │
+```
+
+**Your agent never pays gas** - the CDP facilitator handles all on-chain settlement.
+
+## Use Cases
+
+- **AI Assistants** - Let your assistant pay for premium APIs
+- **Autonomous Agents** - Agents that can spend within limits
+- **Multi-Agent Systems** - Agents paying other agents for services
+- **AI Pipelines** - Pay-per-use for expensive compute steps
+
+## Related Projects
+
+- [moltspay (Node.js)](https://github.com/Yaqing2023/moltspay) - Node.js SDK and CLI
+- [x402 Protocol](https://www.x402.org/) - The HTTP payment standard
+
 ## Links
 
-- **Docs:** https://moltspay.com
-- **NPM (Node.js):** https://npmjs.com/package/moltspay
+- **Website:** https://moltspay.com
+- **PyPI:** https://pypi.org/project/moltspay/
+- **npm (Node.js):** https://www.npmjs.com/package/moltspay
 - **GitHub:** https://github.com/Yaqing2023/moltspay-python
 
 ## License
