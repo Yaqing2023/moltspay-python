@@ -93,6 +93,96 @@ def simple_service(params: dict) -> dict:
     return {"result": "Hello!"}
 ```
 
+## Service Types
+
+MoltsPay supports **any digital service** — not just AI APIs.
+
+### API Service (AI, Data Processing)
+
+Services that execute code and return results:
+
+```json
+{
+  "services": [{
+    "id": "text-to-video",
+    "type": "api_service",
+    "function": "generate_video",
+    "price": 0.99
+  }]
+}
+```
+
+### File Download (Templates, Prompts, Ebooks)
+
+Digital products delivered as downloadable files:
+
+**moltspay.services.json:**
+```json
+{
+  "provider": {
+    "name": "My Digital Products",
+    "wallet": "0xYourWallet"
+  },
+  "services": [{
+    "id": "marketing-prompts",
+    "type": "file_download",
+    "name": "100 Marketing Prompts",
+    "description": "ChatGPT prompts for marketers",
+    "function": "get_prompts_download",
+    "price": 4.99,
+    "currency": "USDC"
+  }]
+}
+```
+
+**__init__.py:**
+```python
+import os
+import time
+import hmac
+import hashlib
+
+def get_prompts_download(params: dict) -> dict:
+    """Return a signed download URL for the purchased file."""
+    
+    # Option 1: Simple static URL (less secure)
+    # return {"download_url": "https://your-cdn.com/files/prompts.pdf"}
+    
+    # Option 2: Signed URL with expiration (recommended)
+    file_path = "files/marketing-prompts.pdf"
+    expires = int(time.time()) + 3600  # 1 hour
+    
+    # Generate signed URL (example for S3-compatible storage)
+    signature = generate_signed_url(file_path, expires)
+    
+    return {
+        "download_url": f"https://your-cdn.com/{file_path}?expires={expires}&sig={signature}",
+        "filename": "marketing-prompts.pdf",
+        "expires_in": 3600
+    }
+
+def generate_signed_url(path: str, expires: int) -> str:
+    """Generate a signed URL signature."""
+    secret = os.environ.get("DOWNLOAD_SECRET", "your-secret")
+    message = f"{path}:{expires}"
+    return hmac.new(secret.encode(), message.encode(), hashlib.sha256).hexdigest()[:16]
+```
+
+### Design Templates (Figma, Canva)
+
+```json
+{
+  "services": [{
+    "id": "landing-page-kit",
+    "type": "file_download",
+    "name": "Landing Page Template Kit",
+    "function": "get_template_download",
+    "price": 29.00,
+    "currency": "USDC"
+  }]
+}
+```
+
 ## Environment Setup
 
 ### 1. Create CDP Account (Required for Mainnet)
