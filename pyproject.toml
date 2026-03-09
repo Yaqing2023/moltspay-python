@@ -5,7 +5,7 @@ description = "Python SDK for MoltsPay - Agent-to-Agent Payments. LangChain comp
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "Zen7 Labs", email = "zen7@moltspay.com"}
+    {name = "Zen7 Labs", email = "support@zen7.com"}
 ]
 keywords = [
     "ai", "agent", "payments", "crypto", "usdc", "usdt", "x402",
@@ -46,6 +46,9 @@ dev = [
 all = [
     "moltspay[langchain,dev]",
 ]
+
+[project.scripts]
+moltspay-server = "moltspay.server.__main__:main"
 
 [project.urls]
 Homepage = "https://moltspay.com"

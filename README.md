@@ -204,6 +204,24 @@ Your Agent                     Service Provider              Blockchain
 - **Multi-Agent Systems** - Agents paying other agents for services
 - **AI Pipelines** - Pay-per-use for expensive compute steps
 
+## Running a Server (Accepting Payments)
+
+Want to accept payments for your AI services? See the **[Server Guide](docs/SERVER.md)**.
+
+Quick start:
+
+```bash
+# Install
+pip install moltspay
+
+# Create skill structure
+mkdir my_skill && cd my_skill
+# Add moltspay.services.json and __init__.py (see docs)
+
+# Start server
+moltspay-server ./my_skill --port 8402
+```
+
 ## Related Projects
 
 - [moltspay (Node.js)](https://github.com/Yaqing2023/moltspay) - Node.js SDK and CLI

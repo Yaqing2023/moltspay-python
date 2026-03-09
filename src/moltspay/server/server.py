@@ -1,0 +1,551 @@
+"""
+MoltsPay Server - Payment infrastructure for AI Agents (Python).
+
+Usage:
+    moltspay-server ./my_skill1 ./my_skill2 --port 8402
+    
+Or programmatically:
+    from moltspay.server import MoltsPayServer
+    
+    server = MoltsPayServer("./my_skill")
+    server.listen(8402)
+"""
+
+import asyncio
+import base64
+import importlib.util
+import inspect
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Union
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
+
+from .types import (
+    ServicesManifest,
+    ServiceConfig,
+    RegisteredSkill,
+    X402PaymentPayload,
+    X402PaymentRequirements,
+    TOKEN_ADDRESSES,
+    TOKEN_DOMAINS,
+    X402_VERSION,
+)
+from .facilitator import CDPFacilitator, load_env_file
+
+
+class MoltsPayServer:
+    """
+    MoltsPay x402 Payment Server.
+    
+    Loads Python skills and serves them with x402 payment handling.
+    
+    Example:
+        server = MoltsPayServer("./video_gen", "./transcription")
+        server.listen(8402)
+    """
+    
+    def __init__(
+        self,
+        *skill_paths: str,
+        port: int = 8402,
+        host: str = "0.0.0.0",
+        use_mainnet: Optional[bool] = None,
+    ):
+        """
+        Initialize MoltsPay Server.
+        
+        Args:
+            *skill_paths: Paths to skill directories containing moltspay.services.json
+            port: Server port (default: 8402)
+            host: Server host (default: 0.0.0.0)
+            use_mainnet: Use mainnet or testnet. Defaults to USE_MAINNET env var.
+        """
+        # Load env first
+        load_env_file()
+        
+        self.port = port
+        self.host = host
+        self.skills: Dict[str, RegisteredSkill] = {}
+        self.manifests: List[ServicesManifest] = []
+        
+        # Determine network
+        if use_mainnet is None:
+            use_mainnet = os.environ.get("USE_MAINNET", "").lower() == "true"
+        self.use_mainnet = use_mainnet
+        self.network_id = "eip155:8453" if use_mainnet else "eip155:84532"
+        
+        # Initialize facilitator
+        self.facilitator = CDPFacilitator(use_mainnet=use_mainnet)
+        
+        # Load all skill paths
+        for skill_path in skill_paths:
+            self._load_skill(skill_path)
+        
+        # Provider info (from first manifest)
+        self.provider = self.manifests[0].provider if self.manifests else None
+        
+        # Log startup info
+        total_services = sum(len(m.services) for m in self.manifests)
+        network_name = "Base mainnet" if use_mainnet else "Base Sepolia (testnet)"
+        
+        print(f"[MoltsPay] Loaded {total_services} services from {len(self.manifests)} skill(s)")
+        if self.provider:
+            print(f"[MoltsPay] Provider: {self.provider.name}")
+            print(f"[MoltsPay] Receive wallet: {self.provider.wallet}")
+        print(f"[MoltsPay] Network: {self.network_id} ({network_name})")
+        print(f"[MoltsPay] Facilitator: {self.facilitator.get_config_summary()}")
+        print(f"[MoltsPay] Protocol: x402 (gasless for both client AND server)")
+    
+    def _load_skill(self, skill_path: str) -> None:
+        """Load a skill from a directory path."""
+        path = Path(skill_path).resolve()
+        
+        if not path.is_dir():
+            raise ValueError(f"Skill path is not a directory: {path}")
+        
+        # Load services manifest
+        manifest_path = path / "moltspay.services.json"
+        if not manifest_path.exists():
+            raise ValueError(f"No moltspay.services.json found in {path}")
+        
+        manifest_data = json.loads(manifest_path.read_text())
+        manifest = ServicesManifest(**manifest_data)
+        self.manifests.append(manifest)
+        
+        # Load Python module
+        init_path = path / "__init__.py"
+        if not init_path.exists():
+            raise ValueError(f"No __init__.py found in {path}")
+        
+        # Import the module
+        module_name = path.name
+        spec = importlib.util.spec_from_file_location(module_name, init_path)
+        if spec is None or spec.loader is None:
+            raise ValueError(f"Could not load module from {init_path}")
+        
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+        
+        print(f"[MoltsPay] Loading skill from {path}")
+        
+        # Register each service's handler
+        for service in manifest.services:
+            func_name = service.function
+            
+            if not hasattr(module, func_name):
+                print(f"[MoltsPay] WARNING: Function '{func_name}' not found in {module_name}")
+                continue
+            
+            handler = getattr(module, func_name)
+            if not callable(handler):
+                print(f"[MoltsPay] WARNING: '{func_name}' is not callable")
+                continue
+            
+            self.skills[service.id] = RegisteredSkill(
+                id=service.id,
+                config=service,
+                handler=handler,
+            )
+            print(f"[MoltsPay]   Registered: {service.id} -> {func_name}()")
+    
+    def _build_payment_requirements(
+        self,
+        config: ServiceConfig,
+        wallet: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> X402PaymentRequirements:
+        """Build x402 payment requirements for a service."""
+        amount_units = str(int(config.price * 1e6))
+        accepted = config.accepted_currencies
+        
+        selected_token = token if token and token in accepted else accepted[0]
+        token_addresses = TOKEN_ADDRESSES.get(self.network_id, {})
+        token_address = token_addresses.get(selected_token, "")
+        token_domain = TOKEN_DOMAINS.get(selected_token, TOKEN_DOMAINS["USDC"])
+        
+        return X402PaymentRequirements(
+            scheme="exact",
+            network=self.network_id,
+            asset=token_address,
+            amount=amount_units,
+            payTo=wallet or (self.provider.wallet if self.provider else ""),
+            maxTimeoutSeconds=300,
+            extra=token_domain,
+        )
+    
+    def _detect_payment_token(self, payment: X402PaymentPayload) -> Optional[str]:
+        """Detect which token is being used in the payment."""
+        asset = None
+        if payment.accepted:
+            asset = payment.accepted.get("asset")
+        if not asset and isinstance(payment.payload, dict):
+            asset = payment.payload.get("asset")
+        
+        if not asset:
+            return None
+        
+        token_addresses = TOKEN_ADDRESSES.get(self.network_id, {})
+        for symbol, address in token_addresses.items():
+            if address.lower() == asset.lower():
+                return symbol
+        return None
+    
+    async def _execute_handler(
+        self,
+        handler: Callable,
+        params: Dict[str, Any],
+    ) -> Any:
+        """Execute a skill handler (sync or async)."""
+        if inspect.iscoroutinefunction(handler):
+            return await handler(params)
+        else:
+            # Run sync handler in thread pool
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, handler, params)
+    
+    def listen(self, port: Optional[int] = None) -> None:
+        """
+        Start the HTTP server.
+        
+        Args:
+            port: Override port (optional)
+        """
+        port = port or self.port
+        server = self
+        
+        class RequestHandler(BaseHTTPRequestHandler):
+            """HTTP request handler for MoltsPay."""
+            
+            def log_message(self, format, *args):
+                """Suppress default logging."""
+                pass
+            
+            def _send_json(self, status: int, data: Any, headers: Dict[str, str] = None):
+                """Send JSON response."""
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Payment")
+                self.send_header("Access-Control-Expose-Headers", "X-Payment-Required, X-Payment-Response")
+                if headers:
+                    for key, value in headers.items():
+                        self.send_header(key, value)
+                self.end_headers()
+                self.wfile.write(json.dumps(data, indent=2).encode())
+            
+            def _send_402(self, config: ServiceConfig):
+                """Send 402 Payment Required response."""
+                accepted_tokens = config.accepted_currencies
+                accepts = [
+                    {
+                        "scheme": "exact",
+                        "network": server.network_id,
+                        "asset": TOKEN_ADDRESSES.get(server.network_id, {}).get(token, ""),
+                        "amount": str(int(config.price * 1e6)),
+                        "payTo": server.provider.wallet if server.provider else "",
+                        "maxTimeoutSeconds": 300,
+                        "extra": TOKEN_DOMAINS.get(token, TOKEN_DOMAINS["USDC"]),
+                    }
+                    for token in accepted_tokens
+                ]
+                
+                payment_required = {
+                    "x402Version": X402_VERSION,
+                    "accepts": accepts,
+                    "acceptedCurrencies": accepted_tokens,
+                    "resource": {
+                        "url": f"/execute?service={config.id}",
+                        "description": f"{config.name} - ${config.price} {config.currency}",
+                        "mimeType": "application/json",
+                    },
+                }
+                
+                encoded = base64.b64encode(json.dumps(payment_required).encode()).decode()
+                
+                self.send_response(402)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("X-Payment-Required", encoded)
+                self.end_headers()
+                
+                response = {
+                    "error": "Payment required",
+                    "message": f"Service requires ${config.price} {config.currency}",
+                    "acceptedCurrencies": accepted_tokens,
+                    "x402": payment_required,
+                }
+                self.wfile.write(json.dumps(response, indent=2).encode())
+            
+            def do_OPTIONS(self):
+                """Handle CORS preflight."""
+                self.send_response(204)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Payment")
+                self.end_headers()
+            
+            def do_GET(self):
+                """Handle GET requests."""
+                parsed = urlparse(self.path)
+                
+                if parsed.path == "/services":
+                    return self._handle_get_services()
+                elif parsed.path == "/.well-known/agent-services.json":
+                    return self._handle_agent_services()
+                elif parsed.path == "/health":
+                    return self._handle_health()
+                else:
+                    self._send_json(404, {"error": "Not found"})
+            
+            def do_POST(self):
+                """Handle POST requests."""
+                parsed = urlparse(self.path)
+                
+                # Read body
+                content_length = int(self.headers.get("Content-Length", 0))
+                body = {}
+                if content_length > 0:
+                    raw_body = self.rfile.read(content_length)
+                    try:
+                        body = json.loads(raw_body)
+                    except json.JSONDecodeError:
+                        return self._send_json(400, {"error": "Invalid JSON"})
+                
+                # Get payment header
+                payment_header = self.headers.get("X-Payment")
+                
+                if parsed.path == "/execute":
+                    return self._handle_execute(body, payment_header)
+                else:
+                    self._send_json(404, {"error": "Not found"})
+            
+            def _handle_get_services(self):
+                """GET /services - List available services."""
+                all_services = []
+                for manifest in server.manifests:
+                    for svc in manifest.services:
+                        all_services.append({
+                            "id": svc.id,
+                            "name": svc.name,
+                            "description": svc.description,
+                            "price": svc.price,
+                            "currency": svc.currency,
+                            "acceptedCurrencies": svc.accepted_currencies,
+                            "input": {k: v.model_dump() for k, v in svc.input.items()},
+                            "output": svc.output,
+                            "available": svc.id in server.skills,
+                        })
+                
+                self._send_json(200, {
+                    "provider": server.provider.model_dump() if server.provider else None,
+                    "services": all_services,
+                    "x402": {
+                        "version": X402_VERSION,
+                        "network": server.network_id,
+                        "schemes": ["exact"],
+                        "mainnet": server.use_mainnet,
+                    },
+                })
+            
+            def _handle_agent_services(self):
+                """GET /.well-known/agent-services.json - Standard discovery."""
+                all_services = []
+                for manifest in server.manifests:
+                    for svc in manifest.services:
+                        all_services.append({
+                            "id": svc.id,
+                            "name": svc.name,
+                            "description": svc.description,
+                            "price": svc.price,
+                            "currency": svc.currency,
+                            "acceptedCurrencies": svc.accepted_currencies,
+                            "available": svc.id in server.skills,
+                        })
+                
+                self._send_json(200, {
+                    "version": "1.0",
+                    "provider": {
+                        "name": server.provider.name if server.provider else "Unknown",
+                        "description": server.provider.description if server.provider else None,
+                        "wallet": server.provider.wallet if server.provider else None,
+                        "chain": server.provider.chain if server.provider else "base",
+                    },
+                    "services": all_services,
+                    "endpoints": {
+                        "services": "/services",
+                        "execute": "/execute",
+                        "health": "/health",
+                    },
+                    "payment": {
+                        "protocol": "x402",
+                        "version": X402_VERSION,
+                        "network": server.network_id,
+                        "schemes": ["exact"],
+                        "mainnet": server.use_mainnet,
+                    },
+                })
+            
+            def _handle_health(self):
+                """GET /health - Health check."""
+                facilitator_health = server.facilitator.health_check()
+                
+                total_services = sum(len(m.services) for m in server.manifests)
+                
+                self._send_json(200 if facilitator_health.get("healthy") else 503, {
+                    "status": "healthy" if facilitator_health.get("healthy") else "degraded",
+                    "network": server.network_id,
+                    "facilitator": facilitator_health,
+                    "services": total_services,
+                    "registered": len(server.skills),
+                })
+            
+            def _handle_execute(self, body: Dict[str, Any], payment_header: Optional[str]):
+                """POST /execute - Execute service with x402 payment."""
+                service_id = body.get("service")
+                params = body.get("params", {})
+                
+                if not service_id:
+                    return self._send_json(400, {"error": "Missing service"})
+                
+                skill = server.skills.get(service_id)
+                if not skill:
+                    return self._send_json(404, {"error": f"Service '{service_id}' not found"})
+                
+                # Validate required params
+                for key, field in skill.config.input.items():
+                    if field.required and key not in params:
+                        return self._send_json(400, {"error": f"Missing required param: {key}"})
+                
+                # If no payment, return 402
+                if not payment_header:
+                    return self._send_402(skill.config)
+                
+                # Parse payment payload
+                try:
+                    decoded = base64.b64decode(payment_header).decode()
+                    payment_data = json.loads(decoded)
+                    payment = X402PaymentPayload(
+                        x402Version=payment_data.get("x402Version", 2),
+                        payload=payment_data.get("payload", {}),
+                        accepted=payment_data.get("accepted"),
+                        resource=payment_data.get("resource"),
+                        scheme=payment_data.get("scheme"),
+                        network=payment_data.get("network"),
+                    )
+                except Exception as e:
+                    return self._send_json(400, {"error": f"Invalid X-Payment header: {e}"})
+                
+                # Validate payment
+                if payment.x402Version != X402_VERSION:
+                    return self._send_json(402, {"error": f"Unsupported x402 version: {payment.x402Version}"})
+                
+                scheme = payment.accepted.get("scheme") if payment.accepted else payment.scheme
+                network = payment.accepted.get("network") if payment.accepted else payment.network
+                
+                if scheme != "exact":
+                    return self._send_json(402, {"error": f"Unsupported scheme: {scheme}"})
+                
+                if network != server.network_id:
+                    return self._send_json(402, {"error": f"Network mismatch: expected {server.network_id}, got {network}"})
+                
+                # Detect payment token
+                payment_token = server._detect_payment_token(payment)
+                if payment_token and payment_token not in skill.config.accepted_currencies:
+                    accepted = skill.config.accepted_currencies
+                    return self._send_json(402, {
+                        "error": f"Token {payment_token} not accepted. Accepted: {', '.join(accepted)}"
+                    })
+                
+                # Build requirements
+                requirements = server._build_payment_requirements(skill.config, token=payment_token)
+                
+                # Verify payment
+                print(f"[MoltsPay] Verifying payment...")
+                verify_result = server.facilitator.verify(payment, requirements)
+                if not verify_result.valid:
+                    return self._send_json(402, {
+                        "error": f"Payment verification failed: {verify_result.error}",
+                        "facilitator": verify_result.facilitator,
+                    })
+                print(f"[MoltsPay] Verified by {verify_result.facilitator}")
+                
+                # Execute skill FIRST (pay on success)
+                timeout_seconds = int(os.environ.get("SKILL_TIMEOUT_SECONDS", "1200"))
+                print(f"[MoltsPay] Executing skill: {service_id} (timeout: {timeout_seconds}s)")
+                
+                try:
+                    # Run async handler
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        result = loop.run_until_complete(
+                            asyncio.wait_for(
+                                server._execute_handler(skill.handler, params),
+                                timeout=timeout_seconds,
+                            )
+                        )
+                    finally:
+                        loop.close()
+                except asyncio.TimeoutError:
+                    print(f"[MoltsPay] Skill timeout after {timeout_seconds}s")
+                    return self._send_json(500, {
+                        "error": "Service execution failed",
+                        "message": f"Timeout after {timeout_seconds}s",
+                    })
+                except Exception as e:
+                    print(f"[MoltsPay] Skill execution failed: {e}")
+                    return self._send_json(500, {
+                        "error": "Service execution failed",
+                        "message": str(e),
+                    })
+                
+                # Skill succeeded - now settle payment
+                print(f"[MoltsPay] Skill succeeded, settling payment...")
+                settlement = server.facilitator.settle(payment, requirements)
+                if settlement.success:
+                    print(f"[MoltsPay] Payment settled: {settlement.transaction}")
+                else:
+                    print(f"[MoltsPay] Settlement warning: {settlement.error}")
+                
+                # Build response
+                extra_headers = {}
+                if settlement.success:
+                    response_payload = {
+                        "success": True,
+                        "transaction": settlement.transaction,
+                        "network": network,
+                        "facilitator": settlement.facilitator,
+                    }
+                    extra_headers["X-Payment-Response"] = base64.b64encode(
+                        json.dumps(response_payload).encode()
+                    ).decode()
+                
+                self._send_json(200, {
+                    "success": True,
+                    "result": result,
+                    "payment": {
+                        "transaction": settlement.transaction,
+                        "status": "settled" if settlement.success else "pending",
+                        "facilitator": settlement.facilitator,
+                    } if settlement.success else {"status": "pending"},
+                }, extra_headers)
+        
+        # Start server
+        httpd = HTTPServer((self.host, port), RequestHandler)
+        print(f"[MoltsPay] Server listening on http://{self.host}:{port}")
+        print(f"[MoltsPay] Endpoints:")
+        print(f"  GET  /services                      - List available services")
+        print(f"  GET  /.well-known/agent-services.json - Service discovery")
+        print(f"  POST /execute                       - Execute service (x402 payment)")
+        print(f"  GET  /health                        - Health check")
+        
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print("\n[MoltsPay] Shutting down...")
+            httpd.shutdown()
