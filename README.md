@@ -16,6 +16,7 @@ MoltsPay is blockchain payment infrastructure designed for AI agents. It solves 
 - 💨 **Gasless Payments** - Uses EIP-2612 permits, no ETH needed
 - 🔗 **x402 Protocol** - HTTP 402 Payment Required - payments as native HTTP flow
 - 🔒 **Spending Limits** - Set per-transaction and daily limits for safety
+- 🌐 **Multi-Chain** - Base and Polygon supported
 - 🦜 **LangChain Ready** - Drop-in tools for LangChain agents
 
 ## Installation
@@ -84,6 +85,36 @@ print(f"Spent today: {limits.spent_today}")
 # Update limits
 client.set_limits(max_per_tx=20, max_per_day=200)
 ```
+
+### Multi-Chain Support
+
+MoltsPay supports multiple chains. Default is Base, but you can use Polygon:
+
+```python
+from moltspay import MoltsPay
+
+# Default: Base
+client = MoltsPay()
+
+# Use Polygon
+client = MoltsPay(chain='polygon')
+
+# Pay on Polygon
+result = client.pay(
+    "https://juai8.com/zen7",
+    "text-to-video",
+    prompt="a cat dancing"
+)
+```
+
+**Supported Chains:**
+
+| Chain | Network ID | Token |
+|-------|------------|-------|
+| Base | eip155:8453 | USDC |
+| Polygon | eip155:137 | USDC |
+
+Both chains are gasless - the CDP facilitator handles all on-chain settlement.
 
 ### Async Support
 
