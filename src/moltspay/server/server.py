@@ -26,6 +26,7 @@ from urllib.parse import urlparse, parse_qs
 from .types import (
     ServicesManifest,
     ServiceConfig,
+    ChainConfig,
     RegisteredSkill,
     X402PaymentPayload,
     X402PaymentRequirements,
@@ -52,7 +53,6 @@ class MoltsPayServer:
         *skill_paths: str,
         port: int = 8402,
         host: str = "0.0.0.0",
-        use_mainnet: Optional[bool] = None,
     ):
         """
         Initialize MoltsPay Server.
@@ -61,7 +61,6 @@ class MoltsPayServer:
             *skill_paths: Paths to skill directories containing moltspay.services.json
             port: Server port (default: 8402)
             host: Server host (default: 0.0.0.0)
-            use_mainnet: Use mainnet or testnet. Defaults to USE_MAINNET env var.
         """
         # Load env first
         load_env_file()
@@ -71,14 +70,8 @@ class MoltsPayServer:
         self.skills: Dict[str, RegisteredSkill] = {}
         self.manifests: List[ServicesManifest] = []
         
-        # Determine network
-        if use_mainnet is None:
-            use_mainnet = os.environ.get("USE_MAINNET", "").lower() == "true"
-        self.use_mainnet = use_mainnet
-        self.network_id = "eip155:8453" if use_mainnet else "eip155:84532"
-        
         # Initialize facilitator
-        self.facilitator = CDPFacilitator(use_mainnet=use_mainnet)
+        self.facilitator = CDPFacilitator()
         
         # Load all skill paths
         for skill_path in skill_paths:
@@ -87,17 +80,31 @@ class MoltsPayServer:
         # Provider info (from first manifest)
         self.provider = self.manifests[0].provider if self.manifests else None
         
+        # Get configured chains
+        self.chains = self._get_provider_chains()
+        self.supported_networks = [c.network for c in self.chains]
+        
         # Log startup info
         total_services = sum(len(m.services) for m in self.manifests)
-        network_name = "Base mainnet" if use_mainnet else "Base Sepolia (testnet)"
+        chain_names = ", ".join(c.chain for c in self.chains)
         
         print(f"[MoltsPay] Loaded {total_services} services from {len(self.manifests)} skill(s)")
         if self.provider:
             print(f"[MoltsPay] Provider: {self.provider.name}")
             print(f"[MoltsPay] Receive wallet: {self.provider.wallet}")
-        print(f"[MoltsPay] Network: {self.network_id} ({network_name})")
+        print(f"[MoltsPay] Chains: {chain_names} (multi-chain enabled)")
         print(f"[MoltsPay] Facilitator: {self.facilitator.get_config_summary()}")
         print(f"[MoltsPay] Protocol: x402 (gasless for both client AND server)")
+    
+    def _get_provider_chains(self) -> List[ChainConfig]:
+        """Get supported chains from provider config."""
+        if self.provider and self.provider.chains:
+            return self.provider.chains
+        
+        # Fallback: single chain from legacy 'chain' field
+        chain = self.provider.chain if self.provider else "base"
+        network = "eip155:8453" if chain == "base" else "eip155:137"
+        return [ChainConfig(chain=chain, network=network, tokens=["USDC"])]
     
     def _load_skill(self, skill_path: str) -> None:
         """Load a skill from a directory path."""
@@ -155,6 +162,7 @@ class MoltsPayServer:
     def _build_payment_requirements(
         self,
         config: ServiceConfig,
+        network: str,
         wallet: Optional[str] = None,
         token: Optional[str] = None,
     ) -> X402PaymentRequirements:
@@ -163,13 +171,13 @@ class MoltsPayServer:
         accepted = config.accepted_currencies
         
         selected_token = token if token and token in accepted else accepted[0]
-        token_addresses = TOKEN_ADDRESSES.get(self.network_id, {})
+        token_addresses = TOKEN_ADDRESSES.get(network, {})
         token_address = token_addresses.get(selected_token, "")
         token_domain = TOKEN_DOMAINS.get(selected_token, TOKEN_DOMAINS["USDC"])
         
         return X402PaymentRequirements(
             scheme="exact",
-            network=self.network_id,
+            network=network,
             asset=token_address,
             amount=amount_units,
             payTo=wallet or (self.provider.wallet if self.provider else ""),
@@ -177,7 +185,7 @@ class MoltsPayServer:
             extra=token_domain,
         )
     
-    def _detect_payment_token(self, payment: X402PaymentPayload) -> Optional[str]:
+    def _detect_payment_token(self, payment: X402PaymentPayload, network: str) -> Optional[str]:
         """Detect which token is being used in the payment."""
         asset = None
         if payment.accepted:
@@ -188,7 +196,7 @@ class MoltsPayServer:
         if not asset:
             return None
         
-        token_addresses = TOKEN_ADDRESSES.get(self.network_id, {})
+        token_addresses = TOKEN_ADDRESSES.get(network, {})
         for symbol, address in token_addresses.items():
             if address.lower() == asset.lower():
                 return symbol
@@ -239,25 +247,28 @@ class MoltsPayServer:
                 self.wfile.write(json.dumps(data, indent=2).encode())
             
             def _send_402(self, config: ServiceConfig):
-                """Send 402 Payment Required response."""
-                accepted_tokens = config.accepted_currencies
-                accepts = [
-                    {
-                        "scheme": "exact",
-                        "network": server.network_id,
-                        "asset": TOKEN_ADDRESSES.get(server.network_id, {}).get(token, ""),
-                        "amount": str(int(config.price * 1e6)),
-                        "payTo": server.provider.wallet if server.provider else "",
-                        "maxTimeoutSeconds": 300,
-                        "extra": TOKEN_DOMAINS.get(token, TOKEN_DOMAINS["USDC"]),
-                    }
-                    for token in accepted_tokens
-                ]
+                """Send 402 Payment Required response with all supported chains."""
+                accepts = []
+                
+                # Build accepts for ALL chains and ALL tokens
+                for chain_config in server.chains:
+                    token_addresses = TOKEN_ADDRESSES.get(chain_config.network, {})
+                    # Use service's accepted currencies, filtered by chain's supported tokens
+                    for token in config.accepted_currencies:
+                        if token in chain_config.tokens and token in token_addresses:
+                            accepts.append({
+                                "scheme": "exact",
+                                "network": chain_config.network,
+                                "asset": token_addresses[token],
+                                "amount": str(int(config.price * 1e6)),
+                                "payTo": server.provider.wallet if server.provider else "",
+                                "maxTimeoutSeconds": 300,
+                                "extra": TOKEN_DOMAINS.get(token, TOKEN_DOMAINS["USDC"]),
+                            })
                 
                 payment_required = {
                     "x402Version": X402_VERSION,
                     "accepts": accepts,
-                    "acceptedCurrencies": accepted_tokens,
                     "resource": {
                         "url": f"/execute?service={config.id}",
                         "description": f"{config.name} - ${config.price} {config.currency}",
@@ -276,7 +287,8 @@ class MoltsPayServer:
                 response = {
                     "error": "Payment required",
                     "message": f"Service requires ${config.price} {config.currency}",
-                    "acceptedCurrencies": accepted_tokens,
+                    "acceptedCurrencies": config.accepted_currencies,
+                    "supportedChains": [c.chain for c in server.chains],
                     "x402": payment_required,
                 }
                 self.wfile.write(json.dumps(response, indent=2).encode())
@@ -342,13 +354,17 @@ class MoltsPayServer:
                         })
                 
                 self._send_json(200, {
-                    "provider": server.provider.model_dump() if server.provider else None,
+                    "provider": {
+                        "name": server.provider.name if server.provider else "Unknown",
+                        "description": server.provider.description if server.provider else None,
+                        "wallet": server.provider.wallet if server.provider else None,
+                        "chains": [c.model_dump() for c in server.chains],
+                    },
                     "services": all_services,
                     "x402": {
                         "version": X402_VERSION,
-                        "network": server.network_id,
                         "schemes": ["exact"],
-                        "mainnet": server.use_mainnet,
+                        "mainnet": True,
                     },
                 })
             
@@ -373,7 +389,7 @@ class MoltsPayServer:
                         "name": server.provider.name if server.provider else "Unknown",
                         "description": server.provider.description if server.provider else None,
                         "wallet": server.provider.wallet if server.provider else None,
-                        "chain": server.provider.chain if server.provider else "base",
+                        "chains": [c.model_dump() for c in server.chains],
                     },
                     "services": all_services,
                     "endpoints": {
@@ -384,9 +400,8 @@ class MoltsPayServer:
                     "payment": {
                         "protocol": "x402",
                         "version": X402_VERSION,
-                        "network": server.network_id,
                         "schemes": ["exact"],
-                        "mainnet": server.use_mainnet,
+                        "mainnet": True,
                     },
                 })
             
@@ -398,7 +413,7 @@ class MoltsPayServer:
                 
                 self._send_json(200 if facilitator_health.get("healthy") else 503, {
                     "status": "healthy" if facilitator_health.get("healthy") else "degraded",
-                    "network": server.network_id,
+                    "chains": [c.chain for c in server.chains],
                     "facilitator": facilitator_health,
                     "services": total_services,
                     "registered": len(server.skills),
@@ -450,11 +465,13 @@ class MoltsPayServer:
                 if scheme != "exact":
                     return self._send_json(402, {"error": f"Unsupported scheme: {scheme}"})
                 
-                if network != server.network_id:
-                    return self._send_json(402, {"error": f"Network mismatch: expected {server.network_id}, got {network}"})
+                # Validate network is one of our supported chains
+                if network not in server.supported_networks:
+                    supported = ", ".join(server.supported_networks)
+                    return self._send_json(402, {"error": f"Network {network} not supported. Supported: {supported}"})
                 
                 # Detect payment token
-                payment_token = server._detect_payment_token(payment)
+                payment_token = server._detect_payment_token(payment, network)
                 if payment_token and payment_token not in skill.config.accepted_currencies:
                     accepted = skill.config.accepted_currencies
                     return self._send_json(402, {
@@ -462,10 +479,10 @@ class MoltsPayServer:
                     })
                 
                 # Build requirements
-                requirements = server._build_payment_requirements(skill.config, token=payment_token)
+                requirements = server._build_payment_requirements(skill.config, network=network, token=payment_token)
                 
                 # Verify payment
-                print(f"[MoltsPay] Verifying payment...")
+                print(f"[MoltsPay] Verifying payment on {network}...")
                 verify_result = server.facilitator.verify(payment, requirements)
                 if not verify_result.valid:
                     return self._send_json(402, {

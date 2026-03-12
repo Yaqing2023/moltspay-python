@@ -31,16 +31,25 @@ Examples:
     # Start server with multiple skills
     moltspay-server ./video_gen ./transcription ./image_gen
     
-    # Use mainnet
-    moltspay-server ./my_skill --mainnet
-    
 Skill Structure:
     my_skill/
-    ├── moltspay.services.json    # Service definitions
+    ├── moltspay.services.json    # Service definitions (includes chain config)
     └── __init__.py               # Python functions (async or sync)
 
+Chain Configuration (in moltspay.services.json):
+    {
+      "provider": {
+        "name": "My Service",
+        "wallet": "0x...",
+        "chains": [
+          {"chain": "base", "network": "eip155:8453", "tokens": ["USDC", "USDT"]},
+          {"chain": "polygon", "network": "eip155:137", "tokens": ["USDC"]}
+        ]
+      },
+      "services": [...]
+    }
+
 Environment Variables (in ~/.moltspay/.env):
-    USE_MAINNET=true              # Use Base mainnet
     CDP_API_KEY_ID=xxx            # CDP API Key ID
     CDP_API_KEY_SECRET=xxx        # CDP API Key Secret
         """,
@@ -65,18 +74,6 @@ Environment Variables (in ~/.moltspay/.env):
         help="Server host (default: 0.0.0.0)",
     )
     
-    parser.add_argument(
-        "--mainnet",
-        action="store_true",
-        help="Use Base mainnet (requires CDP credentials)",
-    )
-    
-    parser.add_argument(
-        "--testnet",
-        action="store_true",
-        help="Use Base Sepolia testnet (default)",
-    )
-    
     args = parser.parse_args()
     
     # Validate skill paths
@@ -95,20 +92,12 @@ Environment Variables (in ~/.moltspay/.env):
             print(f"Error: No __init__.py found in {skill_path}", file=sys.stderr)
             sys.exit(1)
     
-    # Determine mainnet vs testnet
-    use_mainnet = None
-    if args.mainnet:
-        use_mainnet = True
-    elif args.testnet:
-        use_mainnet = False
-    
     # Create and start server
     try:
         server = MoltsPayServer(
             *args.skills,
             port=args.port,
             host=args.host,
-            use_mainnet=use_mainnet,
         )
         server.listen()
     except KeyboardInterrupt:

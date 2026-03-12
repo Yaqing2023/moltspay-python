@@ -24,6 +24,67 @@ class PaymentRequired:
     raw: dict
 
 
+@dataclass
+class PaymentResponse:
+    """Parsed payment response with transaction info."""
+    success: bool
+    result: Any
+    tx_hash: Optional[str] = None
+    network: Optional[str] = None
+    facilitator: Optional[str] = None
+    raw_payment_response: Optional[dict] = None
+
+
+def parse_payment_response(response: httpx.Response) -> PaymentResponse:
+    """Parse successful payment response including X-Payment-Response header."""
+    result = response.json()
+    
+    # Extract X-Payment-Response header (base64 encoded) - direct x402 servers
+    payment_header = response.headers.get("X-Payment-Response")
+    tx_hash = None
+    network = None
+    facilitator = None
+    raw_payment_response = None
+    
+    if payment_header:
+        try:
+            raw_payment_response = json.loads(base64.b64decode(payment_header))
+            tx_hash = raw_payment_response.get("transaction")
+            network = raw_payment_response.get("network")
+            facilitator = raw_payment_response.get("facilitator")
+        except (json.JSONDecodeError, Exception):
+            pass
+    
+    # Also check response body for payment info (some servers include it there)
+    if isinstance(result, dict):
+        # Check top-level txHash (MoltsPay Creators backend)
+        if not tx_hash:
+            tx_hash = result.get("txHash")
+        
+        # Check payment field (direct x402 servers)
+        payment_info = result.get("payment", {})
+        if not tx_hash:
+            tx_hash = payment_info.get("transaction")
+        if not network:
+            network = payment_info.get("network")
+        if not facilitator:
+            facilitator = payment_info.get("facilitator")
+        
+        # MoltsPay marketplace uses transactionId as fallback (internal ID, not on-chain)
+        # Only use if no real txHash found
+        if not tx_hash and result.get("transactionId"):
+            tx_hash = f"moltspay:{result['transactionId']}"  # Prefix to indicate it's not on-chain
+    
+    return PaymentResponse(
+        success=True,
+        result=result,
+        tx_hash=tx_hash,
+        network=network,
+        facilitator=facilitator,
+        raw_payment_response=raw_payment_response,
+    )
+
+
 def parse_402_response(response: httpx.Response) -> PaymentRequired:
     """Parse 402 Payment Required response."""
     # Try X-Payment-Required header first (base64 encoded)
@@ -217,7 +278,7 @@ class X402Client:
     ) -> httpx.Response:
         """Call a service endpoint."""
         url = f"{base_url.rstrip('/')}/execute"
-        body = {"service": service_id, **params}
+        body = {"service": service_id, "params": params}
         
         headers = {"Content-Type": "application/json"}
         if payment_header:
@@ -232,7 +293,7 @@ class X402Client:
         params: dict,
         account: Account,
         token: str = "USDC",
-    ) -> Any:
+    ) -> PaymentResponse:
         """
         Full x402 flow: call, get 402, sign payment, retry.
         
@@ -244,16 +305,16 @@ class X402Client:
             token: Token to pay with ("USDC" or "USDT")
         
         Returns:
-            Service response data
+            PaymentResponse with result and transaction info
         """
         # First call - expect 402
         response = self.call_service(base_url, service_id, params)
         
-        # If not 402, return directly
+        # If not 402, return directly (free service or already paid)
         if response.status_code != 402:
             if response.status_code >= 400:
                 raise PaymentError(f"Service error: {response.status_code} {response.text}")
-            return response.json()
+            return parse_payment_response(response)
         
         # Parse 402 response
         payment_req = parse_402_response(response)
@@ -267,7 +328,7 @@ class X402Client:
         if response.status_code >= 400:
             raise PaymentError(f"Payment failed: {response.status_code} {response.text}")
         
-        return response.json()
+        return parse_payment_response(response)
 
 
 class AsyncX402Client:
@@ -321,7 +382,7 @@ class AsyncX402Client:
     ) -> httpx.Response:
         """Call a service endpoint."""
         url = f"{base_url.rstrip('/')}/execute"
-        body = {"service": service_id, **params}
+        body = {"service": service_id, "params": params}
         
         headers = {"Content-Type": "application/json"}
         if payment_header:
@@ -336,14 +397,14 @@ class AsyncX402Client:
         params: dict,
         account: Account,
         token: str = "USDC",
-    ) -> Any:
+    ) -> PaymentResponse:
         """Full x402 flow (async version)."""
         response = await self.call_service(base_url, service_id, params)
         
         if response.status_code != 402:
             if response.status_code >= 400:
                 raise PaymentError(f"Service error: {response.status_code} {response.text}")
-            return response.json()
+            return parse_payment_response(response)
         
         payment_req = parse_402_response(response)
         payment_header = build_payment_payload(account, payment_req, token=token)
@@ -353,4 +414,4 @@ class AsyncX402Client:
         if response.status_code >= 400:
             raise PaymentError(f"Payment failed: {response.status_code} {response.text}")
         
-        return response.json()
+        return parse_payment_response(response)

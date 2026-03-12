@@ -16,14 +16,18 @@ Usage:
 
 Skill Structure:
     my_skill/
-    ├── moltspay.services.json    # Service definitions
+    ├── moltspay.services.json    # Service definitions (includes chain config)
     └── __init__.py               # Python functions
 
 Example moltspay.services.json:
     {
       "provider": {
         "name": "My AI Service",
-        "wallet": "0xYourWalletAddress"
+        "wallet": "0xYourWalletAddress",
+        "chains": [
+          {"chain": "base", "network": "eip155:8453", "tokens": ["USDC", "USDT"]},
+          {"chain": "polygon", "network": "eip155:137", "tokens": ["USDC"]}
+        ]
       },
       "services": [{
         "id": "my-service",
@@ -42,9 +46,8 @@ Example __init__.py:
         return {"result": "..."}
 
 Environment Variables (in ~/.moltspay/.env):
-    USE_MAINNET=true              # Use Base mainnet (default: false/testnet)
-    CDP_API_KEY_ID=xxx            # CDP API Key ID (required for mainnet)
-    CDP_API_KEY_SECRET=xxx        # CDP API Key Secret (required for mainnet)
+    CDP_API_KEY_ID=xxx            # CDP API Key ID
+    CDP_API_KEY_SECRET=xxx        # CDP API Key Secret
 """
 
 from .server import MoltsPayServer
@@ -53,6 +56,7 @@ from .types import (
     ServicesManifest,
     ServiceConfig,
     ProviderConfig,
+    ChainConfig,
     RegisteredSkill,
     X402PaymentPayload,
     X402PaymentRequirements,
@@ -66,6 +70,7 @@ __all__ = [
     "ServicesManifest",
     "ServiceConfig",
     "ProviderConfig",
+    "ChainConfig",
     "RegisteredSkill",
     "X402PaymentPayload",
     "X402PaymentRequirements",

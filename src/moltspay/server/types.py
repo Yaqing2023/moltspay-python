@@ -35,12 +35,20 @@ class ServiceConfig(BaseModel):
         return self.acceptedCurrencies or [self.currency]
 
 
+class ChainConfig(BaseModel):
+    """Chain configuration for multi-chain support."""
+    chain: str  # "base" or "polygon"
+    network: str  # "eip155:8453" or "eip155:137"
+    tokens: List[str] = ["USDC"]  # ["USDC", "USDT"]
+
+
 class ProviderConfig(BaseModel):
     """Provider configuration from moltspay.services.json."""
     name: str
     description: Optional[str] = None
     wallet: str
-    chain: str = "base"
+    chain: str = "base"  # deprecated, for backward compat
+    chains: Optional[List[ChainConfig]] = None  # multi-chain support
 
 
 class ServicesManifest(BaseModel):
@@ -105,9 +113,9 @@ TOKEN_ADDRESSES: Dict[str, Dict[str, str]] = {
         "USDC": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
         "USDT": "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2",
     },
-    "eip155:84532": {  # Base Sepolia testnet
-        "USDC": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
-        "USDT": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    "eip155:137": {  # Polygon mainnet
+        "USDC": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+        "USDT": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
     },
 }
 

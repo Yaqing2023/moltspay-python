@@ -40,7 +40,7 @@ class MoltsPay:
         Args:
             wallet_path: Path to wallet file (default: ~/.moltspay/wallet.json)
             private_key: Private key (if provided, ignores wallet_path)
-            chain: Blockchain network ("base" or "base_sepolia")
+            chain: Default chain for direct operations ("base" or "polygon")
             timeout: HTTP timeout in seconds
         """
         self._wallet = Wallet(
@@ -161,7 +161,7 @@ class MoltsPay:
         
         try:
             # Execute x402 payment flow
-            result = self._x402.pay_and_call(
+            payment_response = self._x402.pay_and_call(
                 service_url,
                 service_id,
                 params,
@@ -172,12 +172,21 @@ class MoltsPay:
             # Record spend on success
             self._wallet.record_spend(service.price)
             
+            # Build explorer URL only for real on-chain tx_hash
+            # (not internal IDs like "moltspay:xxx")
+            explorer_url = None
+            if payment_response.tx_hash and not payment_response.tx_hash.startswith("moltspay:"):
+                chain_config = self._wallet.chain_config
+                explorer_url = f"{chain_config['explorer']}{payment_response.tx_hash}"
+            
             return PaymentResult(
                 success=True,
+                tx_hash=payment_response.tx_hash,
                 amount=service.price,
                 token=token,
                 service_id=service_id,
-                result=result,
+                result=payment_response.result,
+                explorer_url=explorer_url,
             )
             
         except PaymentError:
@@ -315,7 +324,7 @@ class AsyncMoltsPay:
                 raise LimitExceeded("daily", self._wallet.limits.max_per_day, service.price)
         
         try:
-            result = await self._x402.pay_and_call(
+            payment_response = await self._x402.pay_and_call(
                 service_url,
                 service_id,
                 params,
@@ -325,12 +334,21 @@ class AsyncMoltsPay:
             
             self._wallet.record_spend(service.price)
             
+            # Build explorer URL only for real on-chain tx_hash
+            # (not internal IDs like "moltspay:xxx")
+            explorer_url = None
+            if payment_response.tx_hash and not payment_response.tx_hash.startswith("moltspay:"):
+                chain_config = self._wallet.chain_config
+                explorer_url = f"{chain_config['explorer']}{payment_response.tx_hash}"
+            
             return PaymentResult(
                 success=True,
+                tx_hash=payment_response.tx_hash,
                 amount=service.price,
                 token=token,
                 service_id=service_id,
-                result=result,
+                result=payment_response.result,
+                explorer_url=explorer_url,
             )
             
         except PaymentError:

@@ -14,19 +14,21 @@ from .exceptions import WalletError
 
 DEFAULT_WALLET_PATH = Path.home() / ".moltspay" / "wallet.json"
 
-# Chain configs
+# Chain configs (wallet works on all EVM chains with same address)
 CHAINS = {
     "base": {
         "chain_id": 8453,
         "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        "usdt": "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2",
         "rpc": "https://mainnet.base.org",
         "explorer": "https://basescan.org/tx/",
     },
-    "base_sepolia": {
-        "chain_id": 84532,
-        "usdc": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
-        "rpc": "https://sepolia.base.org",
-        "explorer": "https://sepolia.basescan.org/tx/",
+    "polygon": {
+        "chain_id": 137,
+        "usdc": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+        "usdt": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
+        "rpc": "https://polygon-bor-rpc.publicnode.com",
+        "explorer": "https://polygonscan.com/tx/",
     },
 }
 

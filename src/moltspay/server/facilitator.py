@@ -8,15 +8,18 @@ Environment variables (from ~/.moltspay/.env):
 """
 
 import os
-import time
-import hmac
-import hashlib
 import json
 from pathlib import Path
 from typing import Optional, Dict, Any
-from urllib.parse import urlparse
 
 import httpx
+
+# Import CDP SDK auth (optional - only needed for mainnet)
+try:
+    from cdp.auth import get_auth_headers, GetAuthHeadersOptions
+    HAS_CDP_SDK = True
+except ImportError:
+    HAS_CDP_SDK = False
 
 from .types import X402PaymentPayload, X402PaymentRequirements, VerifyResult, SettleResult, X402_VERSION
 
@@ -108,10 +111,13 @@ class CDPFacilitator:
         # HTTP client
         self._client = httpx.Client(timeout=30.0)
         
-        # Warn if mainnet without credentials
-        if self.use_mainnet and (not self.api_key_id or not self.api_key_secret):
-            print("[CDPFacilitator] WARNING: Mainnet mode but missing CDP credentials!")
-            print("[CDPFacilitator] Set CDP_API_KEY_ID and CDP_API_KEY_SECRET in ~/.moltspay/.env")
+        # Warn if mainnet without credentials or SDK
+        if self.use_mainnet:
+            if not HAS_CDP_SDK:
+                print("[CDPFacilitator] WARNING: Mainnet requires cdp-sdk. Run: pip install cdp-sdk")
+            if not self.api_key_id or not self.api_key_secret:
+                print("[CDPFacilitator] WARNING: Mainnet mode but missing CDP credentials!")
+                print("[CDPFacilitator] Set CDP_API_KEY_ID and CDP_API_KEY_SECRET in ~/.moltspay/.env")
     
     def close(self):
         """Close HTTP client."""
@@ -132,34 +138,29 @@ class CDPFacilitator:
         """
         Generate authentication headers for CDP API requests.
         
-        CDP uses JWT-style authentication with API keys.
+        Uses the official CDP SDK for JWT-based authentication.
         """
         if not self.use_mainnet:
             # Testnet (x402.org) doesn't require auth
             return {}
         
+        if not HAS_CDP_SDK:
+            raise RuntimeError("cdp-sdk required for mainnet. Run: pip install cdp-sdk")
+        
         if not self.api_key_id or not self.api_key_secret:
             raise ValueError("CDP credentials required for mainnet")
         
-        # Generate timestamp
-        timestamp = str(int(time.time()))
+        # Use CDP SDK to generate auth headers
+        headers = get_auth_headers(GetAuthHeadersOptions(
+            api_key_id=self.api_key_id,
+            api_key_secret=self.api_key_secret,
+            request_method=method,
+            request_host="api.cdp.coinbase.com",
+            request_path=url_path,
+            request_body=body,
+        ))
         
-        # Build message to sign
-        body_str = json.dumps(body, separators=(",", ":")) if body else ""
-        message = f"{timestamp}{method.upper()}{url_path}{body_str}"
-        
-        # Sign with HMAC-SHA256
-        signature = hmac.new(
-            self.api_key_secret.encode(),
-            message.encode(),
-            hashlib.sha256,
-        ).hexdigest()
-        
-        return {
-            "CB-ACCESS-KEY": self.api_key_id,
-            "CB-ACCESS-SIGN": signature,
-            "CB-ACCESS-TIMESTAMP": timestamp,
-        }
+        return headers
     
     def verify(
         self,
