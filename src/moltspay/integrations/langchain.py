@@ -56,7 +56,8 @@ class MoltsPayTool(BaseTool):
         from langchain_openai import ChatOpenAI
         
         llm = ChatOpenAI(model="gpt-4")
-        tools = [MoltsPayTool()]
+        tools = [MoltsPayTool()]  # Default: Base
+        # Or: tools = [MoltsPayTool(chain="polygon")]
         
         agent = initialize_agent(
             tools, 
@@ -85,10 +86,12 @@ Returns the service result (e.g., video URL) or error message."""
     return_direct: bool = False
     
     _client: Optional[MoltsPay] = None
+    chain: str = "base"
     
-    def __init__(self, **kwargs):
+    def __init__(self, chain: str = "base", **kwargs):
         super().__init__(**kwargs)
-        self._client = MoltsPay()
+        self.chain = chain
+        self._client = MoltsPay(chain=chain)
     
     @property
     def client(self) -> MoltsPay:
@@ -121,6 +124,10 @@ class MoltsPayDiscoverTool(BaseTool):
     LangChain tool for discovering available MoltsPay services.
     
     Use this to find out what services a provider offers before paying.
+    
+    Example:
+        tools = [MoltsPayDiscoverTool()]  # Default: Base
+        # Or: tools = [MoltsPayDiscoverTool(chain="polygon")]
     """
     
     name: str = "moltspay_discover"
@@ -132,10 +139,12 @@ Input: provider_url (e.g., 'https://juai8.com/zen7')
 Returns a list of available services with names, descriptions, and prices."""
     
     _client: Optional[MoltsPay] = None
+    chain: str = "base"
     
-    def __init__(self, **kwargs):
+    def __init__(self, chain: str = "base", **kwargs):
         super().__init__(**kwargs)
-        self._client = MoltsPay()
+        self.chain = chain
+        self._client = MoltsPay(chain=chain)
     
     @property
     def client(self) -> MoltsPay:
@@ -168,9 +177,12 @@ Returns a list of available services with names, descriptions, and prices."""
 
 
 # Convenience function to get all MoltsPay tools
-def get_moltspay_tools() -> list:
+def get_moltspay_tools(chain: str = "base") -> list:
     """
     Get all MoltsPay tools for LangChain.
+    
+    Args:
+        chain: Blockchain to use ("base" or "polygon"). Default: "base"
     
     Returns:
         List of [MoltsPayTool, MoltsPayDiscoverTool]
@@ -178,7 +190,12 @@ def get_moltspay_tools() -> list:
     Example:
         from moltspay.integrations.langchain import get_moltspay_tools
         
+        # Default: Base
         tools = get_moltspay_tools()
+        
+        # Or use Polygon
+        tools = get_moltspay_tools(chain="polygon")
+        
         agent = initialize_agent(tools, llm, ...)
     """
-    return [MoltsPayTool(), MoltsPayDiscoverTool()]
+    return [MoltsPayTool(chain=chain), MoltsPayDiscoverTool(chain=chain)]
