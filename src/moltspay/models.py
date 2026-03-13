@@ -55,6 +55,16 @@ class PaymentResult(BaseModel):
     explorer_url: Optional[str] = None
 
 
+class FundingResult(BaseModel):
+    """Result of a funding request."""
+    success: bool
+    url: Optional[str] = None
+    amount: float
+    chain: str = "base"
+    expires_in: int = 300  # seconds
+    error: Optional[str] = None
+
+
 class WalletData(BaseModel):
     """Wallet file format (compatible with Node.js CLI)."""
     address: str

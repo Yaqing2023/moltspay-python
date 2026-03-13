@@ -1,11 +1,15 @@
 """MoltsPay client - main interface."""
 
 from typing import Any, Optional, List
+import httpx
 
 from .wallet import Wallet
 from .x402 import X402Client, AsyncX402Client
-from .models import Service, Balance, Limits, PaymentResult, TokenSymbol
+from .models import Service, Balance, Limits, PaymentResult, TokenSymbol, FundingResult
 from .exceptions import InsufficientFunds, LimitExceeded, PaymentError
+
+# Server-side onramp API
+ONRAMP_API = "https://moltspay.com/api/v1/onramp"
 
 
 class MoltsPay:
@@ -97,6 +101,116 @@ class MoltsPay:
             max_per_day: Maximum daily spending
         """
         self._wallet.set_limits(max_per_tx=max_per_tx, max_per_day=max_per_day)
+    
+    def fund(self, amount: float, chain: str = None) -> FundingResult:
+        """
+        Generate a funding URL to add USDC to wallet via debit card/Apple Pay.
+        
+        Args:
+            amount: Amount in USD to fund (minimum $5)
+            chain: Chain to fund on ("base" or "polygon", default: wallet's chain)
+        
+        Returns:
+            FundingResult with URL to open/scan as QR code
+        
+        Example:
+            result = client.fund(10)
+            if result.success:
+                print(f"Scan QR or open: {result.url}")
+        """
+        chain = chain or self._chain
+        
+        if amount < 5:
+            return FundingResult(
+                success=False,
+                amount=amount,
+                chain=chain,
+                error="Minimum funding amount is $5"
+            )
+        
+        if chain not in ("base", "polygon"):
+            return FundingResult(
+                success=False,
+                amount=amount,
+                chain=chain,
+                error=f"Invalid chain: {chain}. Use 'base' or 'polygon'"
+            )
+        
+        try:
+            response = httpx.post(
+                f"{ONRAMP_API}/create",
+                json={
+                    "address": self.address,
+                    "amount": amount,
+                    "chain": chain,
+                },
+                timeout=30.0,
+            )
+            
+            if response.status_code != 200:
+                error_data = response.json() if response.headers.get("content-type", "").startswith("application/json") else {}
+                return FundingResult(
+                    success=False,
+                    amount=amount,
+                    chain=chain,
+                    error=error_data.get("error", f"Server error: {response.status_code}")
+                )
+            
+            data = response.json()
+            return FundingResult(
+                success=True,
+                url=data["url"],
+                amount=amount,
+                chain=chain,
+                expires_in=data.get("expires_in", 300),
+            )
+            
+        except Exception as e:
+            return FundingResult(
+                success=False,
+                amount=amount,
+                chain=chain,
+                error=str(e)
+            )
+    
+    def fund_qr(self, amount: float, chain: str = None) -> FundingResult:
+        """
+        Generate funding URL and print QR code to terminal.
+        
+        Args:
+            amount: Amount in USD to fund (minimum $5)
+            chain: Chain to fund on ("base" or "polygon")
+        
+        Returns:
+            FundingResult with URL
+        
+        Example:
+            client.fund_qr(10)  # Prints QR code to terminal
+        """
+        result = self.fund(amount, chain)
+        
+        if result.success and result.url:
+            try:
+                import qrcode
+                qr = qrcode.QRCode(border=1)
+                qr.add_data(result.url)
+                qr.make(fit=True)
+                
+                print(f"\n💳 Fund your wallet\n")
+                print(f"   Wallet: {self.address}")
+                print(f"   Chain: {result.chain}")
+                print(f"   Amount: ${result.amount:.2f}\n")
+                print("   Scan to pay (US debit card / Apple Pay):\n")
+                qr.print_ascii(invert=True)
+                print(f"\n   ⏱️  QR code expires in {result.expires_in // 60} minutes\n")
+            except ImportError:
+                print(f"\n💳 Fund your wallet")
+                print(f"   Open this URL to pay: {result.url}")
+                print(f"   (Install 'qrcode' for QR code: pip install qrcode)\n")
+        else:
+            print(f"❌ {result.error}")
+        
+        return result
     
     def pay(
         self,
