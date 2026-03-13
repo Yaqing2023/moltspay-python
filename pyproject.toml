@@ -1,6 +1,6 @@
 [project]
 name = "moltspay"
-version = "0.4.1"
+version = "0.5.0"
 description = "Python SDK for MoltsPay - Agent-to-Agent Payments. LangChain compatible."
 readme = "README.md"
 license = {text = "MIT"}
