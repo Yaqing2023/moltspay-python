@@ -30,6 +30,14 @@ CHAINS = {
         "rpc": "https://polygon-bor-rpc.publicnode.com",
         "explorer": "https://polygonscan.com/tx/",
     },
+    "base_sepolia": {
+        "chain_id": 84532,
+        "usdc": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        "usdt": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",  # Same as USDC on testnet
+        "rpc": "https://sepolia.base.org",
+        "explorer": "https://sepolia.basescan.org/tx/",
+        "testnet": True,
+    },
 }
 
 

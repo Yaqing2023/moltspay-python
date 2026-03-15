@@ -25,8 +25,9 @@ Example moltspay.services.json:
         "name": "My AI Service",
         "wallet": "0xYourWalletAddress",
         "chains": [
-          {"chain": "base", "network": "eip155:8453", "tokens": ["USDC", "USDT"]},
-          {"chain": "polygon", "network": "eip155:137", "tokens": ["USDC"]}
+          {"chain": "base", "tokens": ["USDC", "USDT"]},
+          {"chain": "polygon", "tokens": ["USDC"]},
+          {"chain": "base_sepolia", "tokens": ["USDC"]}
         ]
       },
       "services": [{

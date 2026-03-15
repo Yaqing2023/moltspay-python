@@ -37,8 +37,8 @@ class ServiceConfig(BaseModel):
 
 class ChainConfig(BaseModel):
     """Chain configuration for multi-chain support."""
-    chain: str  # "base" or "polygon"
-    network: str  # "eip155:8453" or "eip155:137"
+    chain: str  # "base", "polygon", or "base_sepolia"
+    network: Optional[str] = None  # Auto-mapped from chain if not specified
     tokens: List[str] = ["USDC"]  # ["USDC", "USDT"]
 
 

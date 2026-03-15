@@ -28,7 +28,7 @@ def main():
     
     # Check balance (if method exists)
     try:
-        balance = client.get_balance()
+        balance = client.balance()
         print(f"   Balance: {balance}")
     except Exception as e:
         print(f"   Balance check: {e}")

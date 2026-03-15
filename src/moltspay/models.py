@@ -15,6 +15,7 @@ class Service(BaseModel):
     price: float
     currency: str = "USDC"
     accepted_currencies: Optional[List[str]] = None  # ["USDC", "USDT"]
+    chains: Optional[List[str]] = None  # ["base", "polygon", "base_sepolia"]
     parameters: Optional[dict] = None
     
     @property
@@ -77,3 +78,12 @@ class WalletData(BaseModel):
     createdAt: Optional[Any] = None  # Can be int (timestamp) or str
     limits: Optional[dict] = None
     spending: Optional[dict] = None
+
+
+class FaucetResult(BaseModel):
+    """Result of a testnet faucet request."""
+    success: bool
+    amount: float = 1.0
+    chain: str = "base_sepolia"
+    tx_hash: Optional[str] = None
+    error: Optional[str] = None

@@ -53,6 +53,36 @@ result = client.pay(
 print(result.result)
 ```
 
+## Testnet Quickstart
+
+New to MoltsPay? Start on testnet - no real money needed!
+
+```python
+from moltspay import MoltsPay
+
+# Initialize on Base Sepolia testnet
+client = MoltsPay(chain="base_sepolia")
+print(f"Wallet: {client.address}")
+
+# Get free testnet USDC (1 USDC, once per 24h)
+result = client.faucet()
+if result.success:
+    print(f"Got {result.amount} USDC! TX: {result.tx_hash}")
+
+# Make a test payment
+result = client.pay(
+    "https://moltspay.com/a/yaqing",
+    "text-to-video",
+    prompt="a robot dancing in the rain"
+)
+print(result)
+```
+
+Run the demo:
+```bash
+python demos/testnet_faucet_demo.py
+```
+
 ## Features
 
 ### Auto Wallet Management
@@ -109,12 +139,15 @@ result = client.pay(
 
 **Supported Chains:**
 
-| Chain | Network ID | Token |
-|-------|------------|-------|
-| Base | eip155:8453 | USDC |
-| Polygon | eip155:137 | USDC |
+| Chain | Network ID | Token | Type |
+|-------|------------|-------|------|
+| Base | eip155:8453 | USDC | Mainnet |
+| Polygon | eip155:137 | USDC | Mainnet |
+| Base Sepolia | eip155:84532 | USDC | Testnet |
 
-Both chains are gasless - the CDP facilitator handles all on-chain settlement.
+All chains are gasless - the CDP facilitator handles all on-chain settlement.
+
+For testnet, use `client.faucet()` to get free test USDC.
 
 ### Async Support
 

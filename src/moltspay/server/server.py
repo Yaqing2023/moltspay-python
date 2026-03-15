@@ -37,6 +37,14 @@ from .types import (
 from .facilitator import CDPFacilitator, load_env_file
 
 
+# Chain name to network ID mapping
+CHAIN_TO_NETWORK = {
+    "base": "eip155:8453",
+    "base_sepolia": "eip155:84532",
+    "polygon": "eip155:137",
+}
+
+
 class MoltsPayServer:
     """
     MoltsPay x402 Payment Server.
@@ -99,11 +107,20 @@ class MoltsPayServer:
     def _get_provider_chains(self) -> List[ChainConfig]:
         """Get supported chains from provider config."""
         if self.provider and self.provider.chains:
-            return self.provider.chains
+            # Fill in missing network values from chain name
+            result = []
+            for c in self.provider.chains:
+                network = c.network or CHAIN_TO_NETWORK.get(c.chain, "eip155:8453")
+                result.append(ChainConfig(
+                    chain=c.chain,
+                    network=network,
+                    tokens=c.tokens,
+                ))
+            return result
         
         # Fallback: single chain from legacy 'chain' field
         chain = self.provider.chain if self.provider else "base"
-        network = "eip155:8453" if chain == "base" else "eip155:137"
+        network = CHAIN_TO_NETWORK.get(chain, "eip155:8453")
         return [ChainConfig(chain=chain, network=network, tokens=["USDC"])]
     
     def _load_skill(self, skill_path: str) -> None:

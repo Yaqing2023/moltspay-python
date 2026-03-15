@@ -180,25 +180,48 @@ def sign_eip3009_authorization(
     }
 
 
+CHAIN_IDS = {
+    "base": 8453,
+    "base_sepolia": 84532,
+    "polygon": 137,
+}
+
+
 def build_payment_payload(
     account: Account,
     payment_required: PaymentRequired,
     token: str = "USDC",
+    chain: str = None,
 ) -> str:
     """Build and encode x402 payment payload."""
-    # Find the requirement matching the requested token
+    # Get target chain ID if specified
+    target_chain_id = CHAIN_IDS.get(chain) if chain else None
+    
+    # Find the requirement matching the requested token AND chain
     req = None
     for accept in payment_required.accepts:
         # Check if asset matches token (USDC or USDT)
         asset = accept.get("asset", "").lower()
         token_name = accept.get("extra", {}).get("name", "")
         
-        if token == "USDC" and ("usdc" in asset or "USD Coin" in token_name):
-            req = accept
-            break
+        token_matches = False
+        if token == "USDC" and ("usdc" in asset or "USD Coin" in token_name or token_name == "USDC"):
+            token_matches = True
         elif token == "USDT" and ("usdt" in asset or "Tether" in token_name):
-            req = accept
-            break
+            token_matches = True
+        
+        if not token_matches:
+            continue
+        
+        # Check chain if specified
+        if target_chain_id:
+            network = accept.get("network", "")
+            accept_chain_id = int(network.split(":")[1]) if ":" in network else 0
+            if accept_chain_id != target_chain_id:
+                continue
+        
+        req = accept
+        break
     
     # Fall back to first if no match found
     if not req:
@@ -275,9 +298,12 @@ class X402Client:
         service_id: str,
         params: dict,
         payment_header: Optional[str] = None,
+        chain: str = None,
     ) -> httpx.Response:
         """Call a service endpoint."""
         url = f"{base_url.rstrip('/')}/execute"
+        if chain:
+            url = f"{url}?chain={chain}"
         body = {"service": service_id, "params": params}
         
         headers = {"Content-Type": "application/json"}
@@ -293,6 +319,7 @@ class X402Client:
         params: dict,
         account: Account,
         token: str = "USDC",
+        chain: str = None,
     ) -> PaymentResponse:
         """
         Full x402 flow: call, get 402, sign payment, retry.
@@ -303,12 +330,13 @@ class X402Client:
             params: Service parameters
             account: eth-account Account for signing
             token: Token to pay with ("USDC" or "USDT")
+            chain: Chain to pay on ("base", "base_sepolia", "polygon")
         
         Returns:
             PaymentResponse with result and transaction info
         """
-        # First call - expect 402
-        response = self.call_service(base_url, service_id, params)
+        # First call - expect 402 (pass chain to get correct payment requirements)
+        response = self.call_service(base_url, service_id, params, chain=chain)
         
         # If not 402, return directly (free service or already paid)
         if response.status_code != 402:
@@ -319,11 +347,11 @@ class X402Client:
         # Parse 402 response
         payment_req = parse_402_response(response)
         
-        # Build and sign payment with specified token
-        payment_header = build_payment_payload(account, payment_req, token=token)
+        # Build and sign payment with specified token and chain
+        payment_header = build_payment_payload(account, payment_req, token=token, chain=chain)
         
         # Retry with payment
-        response = self.call_service(base_url, service_id, params, payment_header)
+        response = self.call_service(base_url, service_id, params, payment_header, chain=chain)
         
         if response.status_code >= 400:
             raise PaymentError(f"Payment failed: {response.status_code} {response.text}")
@@ -379,9 +407,12 @@ class AsyncX402Client:
         service_id: str,
         params: dict,
         payment_header: Optional[str] = None,
+        chain: str = None,
     ) -> httpx.Response:
         """Call a service endpoint."""
         url = f"{base_url.rstrip('/')}/execute"
+        if chain:
+            url = f"{url}?chain={chain}"
         body = {"service": service_id, "params": params}
         
         headers = {"Content-Type": "application/json"}
@@ -397,9 +428,10 @@ class AsyncX402Client:
         params: dict,
         account: Account,
         token: str = "USDC",
+        chain: str = None,
     ) -> PaymentResponse:
         """Full x402 flow (async version)."""
-        response = await self.call_service(base_url, service_id, params)
+        response = await self.call_service(base_url, service_id, params, chain=chain)
         
         if response.status_code != 402:
             if response.status_code >= 400:
@@ -407,9 +439,9 @@ class AsyncX402Client:
             return parse_payment_response(response)
         
         payment_req = parse_402_response(response)
-        payment_header = build_payment_payload(account, payment_req, token=token)
+        payment_header = build_payment_payload(account, payment_req, token=token, chain=chain)
         
-        response = await self.call_service(base_url, service_id, params, payment_header)
+        response = await self.call_service(base_url, service_id, params, payment_header, chain=chain)
         
         if response.status_code >= 400:
             raise PaymentError(f"Payment failed: {response.status_code} {response.text}")

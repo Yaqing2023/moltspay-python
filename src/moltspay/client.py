@@ -281,6 +281,7 @@ class MoltsPay:
                 params,
                 self._wallet._account,
                 token=token,
+                chain=self._chain,
             )
             
             # Record spend on success
@@ -444,6 +445,7 @@ class AsyncMoltsPay:
                 params,
                 self._wallet._account,
                 token=token,
+                chain=self._chain,
             )
             
             self._wallet.record_spend(service.price)

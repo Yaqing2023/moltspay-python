@@ -10,7 +10,7 @@ Usage:
 
 from .client import MoltsPay, AsyncMoltsPay
 from .wallet import Wallet, create_wallet, load_wallet
-from .models import Service, Balance, Limits, PaymentResult, FundingResult
+from .models import Service, Balance, Limits, PaymentResult, FundingResult, FaucetResult
 from .exceptions import (
     MoltsPayError,
     PaymentError,
@@ -19,7 +19,7 @@ from .exceptions import (
     WalletError,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.6.0"
 __all__ = [
     "MoltsPay",
     "AsyncMoltsPay",
@@ -31,6 +31,7 @@ __all__ = [
     "Limits",
     "PaymentResult",
     "FundingResult",
+    "FaucetResult",
     "MoltsPayError",
     "PaymentError",
     "InsufficientFunds",
