@@ -78,6 +78,10 @@ result = client.pay(
 print(result)
 ```
 
+**Get Testnet USDC:**
+- **MoltsPay faucet:** `client.faucet()` (1 USDC, once per 24h)
+- **Circle faucet:** https://faucet.circle.com/ (select Base Sepolia, get 10 USDC)
+
 Run the demo:
 ```bash
 python demos/testnet_faucet_demo.py
