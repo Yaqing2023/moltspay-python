@@ -192,6 +192,67 @@ except PaymentError as e:
     print(f"Payment failed: {e}")
 ```
 
+## API Reference
+
+### Complete Method List
+
+| Method | Description | Returns |
+|--------|-------------|---------|
+| `client.pay(provider_url, service_id, **params)` | Pay for and execute a service | `PaymentResult` |
+| `client.discover(provider_url)` | List services from a provider | `List[Service]` |
+| `client.balance()` | Get wallet USDC balance | `Balance` |
+| `client.limits()` | Get current spending limits | `Limits` |
+| `client.set_limits(max_per_tx, max_per_day)` | Set spending limits | `None` |
+| `client.faucet()` | Get free testnet USDC (1/day) | `FaucetResult` |
+| `client.fund(amount)` | Open funding page | `FundingResult` |
+| `client.address` | Property: wallet address | `str` |
+
+### The `.pay()` Method
+
+This is the **only** method for making payments:
+
+```python
+result = client.pay(
+    provider_url: str,         # e.g., "https://juai8.com/zen7"
+    service_id: str,           # e.g., "text-to-video"  
+    token: str = "USDC",       # "USDC" or "USDT"
+    **params                   # Service-specific parameters
+)
+
+# Examples:
+result = client.pay("https://juai8.com/zen7", "text-to-video", prompt="a cat")
+result = client.pay("https://juai8.com/zen7", "image-to-video", image_url="https://...")
+```
+
+### PaymentResult Object
+
+```python
+result.success      # bool - True if payment succeeded
+result.amount       # float - Amount paid (e.g., 0.99)
+result.currency     # str - "USDC" or "USDT"
+result.tx_hash      # str - Blockchain transaction hash
+result.result       # Any - Service result (e.g., video URL)
+result.error        # str | None - Error message if failed
+```
+
+### ⚠️ Methods That DO NOT Exist
+
+The following methods are sometimes incorrectly suggested by AI assistants, but **they do not exist**:
+
+```python
+# ❌ WRONG - These DO NOT exist:
+client.x402(...)           # NO! 
+client.transfer(...)       # NO!
+client.send(...)           # NO!
+client.execute(...)        # NO!
+client.call_service(...)   # NO!
+client.request(...)        # NO!
+client.make_payment(...)   # NO!
+
+# ✅ CORRECT - Use this:
+client.pay(provider_url, service_id, **params)
+```
+
 ## LangChain Integration
 
 Use MoltsPay as tools in your LangChain agents - let your AI autonomously pay for services!
