@@ -98,8 +98,66 @@ from moltspay import MoltsPay
 
 client = MoltsPay()
 print(f"Address: {client.address}")
-print(f"Balance: {client.balance()} USDC")
 ```
+
+### Funding Your Wallet
+
+Before making payments, you need USDC in your wallet.
+
+#### Option 1: Testnet (Free - For Testing)
+
+Use the faucet to get free testnet USDC:
+
+```python
+from moltspay import MoltsPay
+
+# Initialize on testnet
+client = MoltsPay(chain="base_sepolia")
+print(f"Wallet: {client.address}")
+
+# Get 1 free USDC (once per 24 hours)
+result = client.faucet()
+if result.success:
+    print(f"Received {result.amount} USDC!")
+    print(f"TX: {result.tx_hash}")
+else:
+    print(f"Error: {result.error}")
+```
+
+Alternative: Use [Circle's faucet](https://faucet.circle.com/) to get 10 USDC on Base Sepolia.
+
+#### Option 2: Mainnet (Real Money)
+
+**Method A: Coinbase Onramp (Easiest)**
+
+Buy USDC with debit card or Apple Pay:
+
+```python
+from moltspay import MoltsPay
+
+client = MoltsPay()  # Default: Base mainnet
+
+# Generate funding link (opens Coinbase Onramp)
+result = client.fund(10)  # $10 minimum
+print(f"Open this URL to pay: {result.url}")
+
+# Or print QR code to terminal
+client.fund_qr(10)
+```
+
+**Method B: Direct Transfer**
+
+Send USDC from any wallet (Coinbase, MetaMask, etc.):
+
+```python
+from moltspay import MoltsPay
+
+client = MoltsPay()
+print(f"Send USDC to: {client.address}")
+print(f"Chain: Base (chainId: 8453)")
+```
+
+⚠️ **Important:** Send USDC on the **Base** chain, not Ethereum mainnet!
 
 ### Spending Limits
 

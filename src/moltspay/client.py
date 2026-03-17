@@ -5,11 +5,12 @@ import httpx
 
 from .wallet import Wallet
 from .x402 import X402Client, AsyncX402Client
-from .models import Service, Balance, Limits, PaymentResult, TokenSymbol, FundingResult
+from .models import Service, Balance, Limits, PaymentResult, TokenSymbol, FundingResult, FaucetResult
 from .exceptions import InsufficientFunds, LimitExceeded, PaymentError
 
-# Server-side onramp API
+# Server-side APIs
 ONRAMP_API = "https://moltspay.com/api/v1/onramp"
+FAUCET_API = "https://moltspay.com/api/v1/faucet"
 
 
 class MoltsPay:
@@ -211,6 +212,81 @@ class MoltsPay:
             print(f"❌ {result.error}")
         
         return result
+    
+    def faucet(self) -> FaucetResult:
+        """
+        Request free testnet USDC from MoltsPay faucet.
+        
+        Only works on testnet chains (base_sepolia). Returns 1 USDC per request,
+        limited to once per 24 hours per wallet address.
+        
+        Returns:
+            FaucetResult with transaction details
+        
+        Example:
+            client = MoltsPay(chain="base_sepolia")
+            result = client.faucet()
+            if result.success:
+                print(f"Received {result.amount} USDC!")
+                print(f"TX: {result.tx_hash}")
+        
+        Note:
+            For mainnet USDC, use fund() or fund_qr() instead.
+        """
+        # Check if on testnet
+        if self._chain not in ("base_sepolia",):
+            return FaucetResult(
+                success=False,
+                amount=0,
+                chain=self._chain,
+                error=f"Faucet only works on testnet. Current chain: {self._chain}. "
+                      f"Use MoltsPay(chain='base_sepolia') for testnet, or fund() for mainnet."
+            )
+        
+        try:
+            response = httpx.post(
+                FAUCET_API,
+                json={"address": self.address, "chain": self._chain},
+                timeout=30.0,
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return FaucetResult(
+                    success=True,
+                    amount=data.get("amount", 1.0),
+                    chain=self._chain,
+                    tx_hash=data.get("tx_hash"),
+                )
+            elif response.status_code == 429:
+                return FaucetResult(
+                    success=False,
+                    amount=0,
+                    chain=self._chain,
+                    error="Rate limited: You can only request once per 24 hours. Try again later."
+                )
+            else:
+                error_msg = response.json().get("error", response.text)
+                return FaucetResult(
+                    success=False,
+                    amount=0,
+                    chain=self._chain,
+                    error=f"Faucet request failed: {error_msg}"
+                )
+        except httpx.TimeoutException:
+            return FaucetResult(
+                success=False,
+                amount=0,
+                chain=self._chain,
+                error="Request timed out. Please try again."
+            )
+        except Exception as e:
+            return FaucetResult(
+                success=False,
+                amount=0,
+                chain=self._chain,
+                error=f"Faucet request failed: {str(e)}"
+            )
     
     def pay(
         self,
