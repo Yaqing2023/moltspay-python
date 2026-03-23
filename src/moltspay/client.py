@@ -417,7 +417,7 @@ class MoltsPay:
                 error="Minimum funding amount is $5"
             )
         
-        valid_chains = ("base", "polygon", "bnb", "tempo_moderato")
+        valid_chains = ("base", "polygon", "solana", "bnb", "tempo_moderato")
         if chain not in valid_chains:
             return FundingResult(
                 success=False,
@@ -426,11 +426,14 @@ class MoltsPay:
                 error=f"Invalid chain: {chain}. Use one of: {', '.join(valid_chains)}"
             )
         
+        # Use Solana address for Solana chain
+        wallet_address = self.solana_address if chain == "solana" else self.evm_address
+        
         try:
             response = httpx.post(
                 f"{ONRAMP_API}/create",
                 json={
-                    "address": self.address,
+                    "address": wallet_address,
                     "amount": amount,
                     "chain": chain,
                 },
