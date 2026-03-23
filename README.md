@@ -6,17 +6,18 @@
 
 **Python SDK for MoltsPay - Agent-to-Agent Payments.**
 
-MoltsPay enables AI agents to pay each other for services using the [x402 protocol](https://www.x402.org/) - HTTP-native payments with USDC stablecoins. No gas fees, no complex wallet management.
+MoltsPay enables AI agents to pay each other for services using the [x402 protocol](https://www.x402.org/) - HTTP-native payments with USDC stablecoins. No gas fees for clients, no complex wallet management.
 
 ## What is MoltsPay?
 
 MoltsPay is blockchain payment infrastructure designed for AI agents. It solves a fundamental problem: **how do autonomous AI agents pay for services?**
 
 - 🤖 **Agent-to-Agent Commerce** - AI agents can autonomously discover, pay for, and use services
-- 💨 **Gasless Payments** - Uses EIP-2612 permits, no ETH needed
+- 💨 **Gasless Payments** - Clients never pay gas on any chain
 - 🔗 **x402 Protocol** - HTTP 402 Payment Required - payments as native HTTP flow
 - 🔒 **Spending Limits** - Set per-transaction and daily limits for safety
-- 🌐 **Multi-Chain** - Base and Polygon supported
+- ⛓️ **Multi-Chain** - Base, Polygon, Solana, BNB, Tempo (mainnet & testnet)
+- 🌐 **Multi-VM** - EVM chains + Solana (SVM) with unified API
 - 🦜 **LangChain Ready** - Drop-in tools for LangChain agents
 
 ## Installation
@@ -25,9 +26,19 @@ MoltsPay is blockchain payment infrastructure designed for AI agents. It solves 
 pip install moltspay
 ```
 
+For Solana support:
+```bash
+pip install moltspay[solana]
+```
+
 For LangChain integration:
 ```bash
 pip install moltspay[langchain]
+```
+
+For everything:
+```bash
+pip install moltspay[all]
 ```
 
 ## Quick Start
@@ -53,82 +64,206 @@ result = client.pay(
 print(result.result)
 ```
 
-## Testnet Quickstart
+## Supported Chains
 
-New to MoltsPay? Start on testnet - no real money needed!
+MoltsPay supports 8 chains across EVM and Solana (SVM):
+
+| Chain | Network ID | Type | Protocol | Gas Model |
+|-------|------------|------|----------|-----------|
+| Base | eip155:8453 | Mainnet | x402 + CDP | Gasless (CDP pays) |
+| Polygon | eip155:137 | Mainnet | x402 + CDP | Gasless (CDP pays) |
+| Solana | solana:mainnet | Mainnet | x402 + SOL Facilitator | Gasless (server pays) |
+| BNB | eip155:56 | Mainnet | x402 + BNB Facilitator | Gasless (server pays) |
+| Base Sepolia | eip155:84532 | Testnet | x402 + CDP | Gasless (CDP pays) |
+| Solana Devnet | solana:devnet | Testnet | x402 + SOL Facilitator | Gasless (server pays) |
+| BNB Testnet | eip155:97 | Testnet | x402 + BNB Facilitator | Gasless (server pays) |
+| Tempo Moderato | eip155:42431 | Testnet | MPP | Gas-free native |
+
+**Key:** Clients never pay gas on any chain. Different facilitators handle settlement.
+
+## Payment Protocols
+
+MoltsPay uses different protocols optimized for each chain:
+
+### x402 + CDP (Base, Polygon)
+
+Standard x402 flow with Coinbase Developer Platform as facilitator:
+
+```
+Client                         Server                      CDP Facilitator
+  │ POST /execute                │                              │
+  │ ─────────────────────────>   │                              │
+  │ 402 + payment requirements   │                              │
+  │ <─────────────────────────   │                              │
+  │ [Sign EIP-3009 - NO GAS]     │                              │
+  │ POST + X-Payment header      │                              │
+  │ ─────────────────────────>   │ Verify & settle              │
+  │                              │ ─────────────────────────>   │
+  │ 200 OK + result              │                              │
+  │ <─────────────────────────   │                              │
+```
+
+### x402 + SOL Facilitator (Solana)
+
+Solana uses SPL token transfers with server as fee payer:
+
+```
+Client                         Server (Fee Payer)          Solana Network
+  │ POST /execute                │                              │
+  │ ─────────────────────────>   │                              │
+  │ 402 + solanaFeePayer         │                              │
+  │ <─────────────────────────   │                              │
+  │ [Sign SPL Transfer - NO GAS] │                              │
+  │ POST + X-Payment header      │                              │
+  │ ─────────────────────────>   │ Execute + pay ~$0.001 SOL    │
+  │                              │ ─────────────────────────>   │
+  │ 200 OK + result              │                              │
+  │ <─────────────────────────   │                              │
+```
+
+**Key:** Client only signs. Server acts as fee payer and executes transaction.
+
+### x402 + BNB Facilitator (BNB Chain)
+
+BNB uses EIP-712 intent signing with server-sponsored gas:
+
+```
+Client                         Server                      BNB Network
+  │ POST /execute                │                              │
+  │ ─────────────────────────>   │                              │
+  │ 402 + bnbSpender             │                              │
+  │ <─────────────────────────   │                              │
+  │ [Sign EIP-712 Intent-NO GAS] │                              │
+  │ POST + X-Payment header      │                              │
+  │ ─────────────────────────>   │ Execute + pay ~$0.0001 gas   │
+  │                              │ ─────────────────────────>   │
+  │ 200 OK + result              │                              │
+  │ <─────────────────────────   │                              │
+```
+
+**Key:** Client only signs intent. Server executes `transferFrom` and pays gas.
+
+### MPP (Tempo Moderato)
+
+Machine Payments Protocol - client executes directly (gas-free on Tempo):
+
+```
+Client                         Server
+  │ POST /execute                │
+  │ ─────────────────────────>   │
+  │ 402 + WWW-Authenticate       │
+  │ <─────────────────────────   │
+  │ [Execute TIP-20 - NO GAS]    │
+  │ POST + Authorization header  │
+  │ ─────────────────────────>   │
+  │ 200 OK + result              │
+  │ <─────────────────────────   │
+```
+
+**Key:** Tempo is natively gas-free. Client executes transfer directly.
+
+## Testnet Quick Start
+
+Test without real money using our faucets:
 
 ```python
 from moltspay import MoltsPay
 
-# Initialize on Base Sepolia testnet
+# === Base Sepolia (x402 + CDP) ===
 client = MoltsPay(chain="base_sepolia")
-print(f"Wallet: {client.address}")
+result = client.faucet()  # 1 USDC, once per 24h
+print(f"Got {result.amount} USDC!")
 
-# Get free testnet USDC (1 USDC, once per 24h)
-result = client.faucet()
-if result.success:
-    print(f"Got {result.amount} USDC! TX: {result.tx_hash}")
+# === Solana Devnet (x402 + SOL) ===
+client = MoltsPay(chain="solana_devnet")
+result = client.faucet()  # 1 USDC
+print(f"Got {result.amount} USDC!")
 
-# Make a test payment
-result = client.pay(
-    "https://moltspay.com/a/yaqing",
-    "text-to-video",
-    prompt="a robot dancing in the rain"
-)
-print(result)
+# === BNB Testnet (x402 + BNB) ===
+client = MoltsPay(chain="bnb_testnet")
+result = client.faucet()  # 1 USDC + 0.001 tBNB for gas
+print(f"Got {result.amount} USDC!")
+
+# === Tempo Moderato (MPP) ===
+client = MoltsPay(chain="tempo_moderato")
+result = client.faucet()  # 1 pathUSD
+print(f"Got {result.amount} pathUSD!")
 ```
 
-**Get Testnet USDC:**
-- **MoltsPay faucet:** `client.faucet()` (1 USDC, once per 24h)
-- **Circle faucet:** https://faucet.circle.com/ (select Base Sepolia, get 10 USDC)
+**Make test payments:**
 
-Run the demo:
-```bash
-python demos/testnet_faucet_demo.py
+```python
+# Base Sepolia
+result = MoltsPay(chain="base_sepolia").pay(
+    "https://juai8.com/zen7", "text-to-video",
+    prompt="a robot dancing"
+)
+
+# Solana Devnet
+result = MoltsPay(chain="solana_devnet").pay(
+    "https://juai8.com/zen7", "text-to-video",
+    prompt="a cat playing piano"
+)
+
+# BNB Testnet
+result = MoltsPay(chain="bnb_testnet").pay(
+    "https://juai8.com/zen7", "text-to-video",
+    prompt="a sunset timelapse"
+)
+
+# Tempo Moderato
+result = MoltsPay(chain="tempo_moderato").pay(
+    "https://juai8.com/zen7", "text-to-video",
+    prompt="an ocean wave"
+)
 ```
 
 ## Features
 
 ### Auto Wallet Management
 
-Wallet is automatically created on first run and stored at `~/.moltspay/wallet.json`. Compatible with Node.js CLI.
+Wallets are automatically created on first run:
+- **EVM wallet:** `~/.moltspay/wallet.json` (Base, Polygon, BNB, Tempo)
+- **Solana wallet:** `~/.moltspay/wallet-solana.json`
 
 ```python
 from moltspay import MoltsPay
 
 client = MoltsPay()
-print(f"Address: {client.address}")
+print(f"EVM Address: {client.address}")
+
+# Solana address (if initialized)
+client_sol = MoltsPay(chain="solana")
+print(f"Solana Address: {client_sol.address}")
 ```
 
 ### Funding Your Wallet
 
 Before making payments, you need USDC in your wallet.
 
-#### Option 1: Testnet (Free - For Testing)
-
-Use the faucet to get free testnet USDC:
+#### Option 1: Testnet Faucets (Free)
 
 ```python
 from moltspay import MoltsPay
 
-# Initialize on testnet
+# Base Sepolia - 1 USDC (once per 24h)
 client = MoltsPay(chain="base_sepolia")
-print(f"Wallet: {client.address}")
-
-# Get 1 free USDC (once per 24 hours)
 result = client.faucet()
-if result.success:
-    print(f"Received {result.amount} USDC!")
-    print(f"TX: {result.tx_hash}")
-else:
-    print(f"Error: {result.error}")
+
+# Solana Devnet - 1 USDC
+client = MoltsPay(chain="solana_devnet")
+result = client.faucet()
+
+# BNB Testnet - 1 USDC + 0.001 tBNB for gas
+client = MoltsPay(chain="bnb_testnet")
+result = client.faucet()
+
+# Tempo Moderato - 1 pathUSD
+client = MoltsPay(chain="tempo_moderato")
+result = client.faucet()
 ```
 
-Alternative: Use [Circle's faucet](https://faucet.circle.com/) to get 10 USDC on Base Sepolia.
-
-#### Option 2: Mainnet (Real Money)
-
-**Method A: Coinbase Onramp (Easiest)**
+#### Option 2: Coinbase Onramp (Mainnet)
 
 Buy USDC with debit card or Apple Pay:
 
@@ -137,7 +272,7 @@ from moltspay import MoltsPay
 
 client = MoltsPay()  # Default: Base mainnet
 
-# Generate funding link (opens Coinbase Onramp)
+# Generate funding link
 result = client.fund(10)  # $10 minimum
 print(f"Open this URL to pay: {result.url}")
 
@@ -145,9 +280,9 @@ print(f"Open this URL to pay: {result.url}")
 client.fund_qr(10)
 ```
 
-**Method B: Direct Transfer**
+#### Option 3: Direct Transfer (Mainnet)
 
-Send USDC from any wallet (Coinbase, MetaMask, etc.):
+Send USDC from any wallet:
 
 ```python
 from moltspay import MoltsPay
@@ -157,11 +292,27 @@ print(f"Send USDC to: {client.address}")
 print(f"Chain: Base (chainId: 8453)")
 ```
 
-⚠️ **Important:** Send USDC on the **Base** chain, not Ethereum mainnet!
+⚠️ **Important:** Send USDC on the correct chain!
+
+### Multi-Chain Payments
+
+```python
+from moltspay import MoltsPay
+
+# Pay on different chains
+result = MoltsPay(chain="base").pay(...)           # Base mainnet
+result = MoltsPay(chain="polygon").pay(...)        # Polygon mainnet
+result = MoltsPay(chain="solana").pay(...)         # Solana mainnet
+result = MoltsPay(chain="bnb").pay(...)            # BNB mainnet
+result = MoltsPay(chain="base_sepolia").pay(...)   # Base testnet
+result = MoltsPay(chain="solana_devnet").pay(...)  # Solana testnet
+result = MoltsPay(chain="bnb_testnet").pay(...)    # BNB testnet
+result = MoltsPay(chain="tempo_moderato").pay(...) # Tempo testnet
+```
 
 ### Spending Limits
 
-Control your agent's spending with built-in limits:
+Control your agent's spending:
 
 ```python
 from moltspay import MoltsPay
@@ -178,42 +329,42 @@ print(f"Spent today: {limits.spent_today}")
 client.set_limits(max_per_tx=20, max_per_day=200)
 ```
 
-### Multi-Chain Support
-
-MoltsPay supports multiple chains. Default is Base, but you can use Polygon:
+### Check Balances
 
 ```python
 from moltspay import MoltsPay
 
-# Default: Base
 client = MoltsPay()
 
-# Use Polygon
-client = MoltsPay(chain='polygon')
+# Single chain balance
+balance = client.balance()
+print(f"USDC: {balance.usdc}")
+print(f"Chain: {balance.chain}")
 
-# Pay on Polygon
-result = client.pay(
-    "https://juai8.com/zen7",
-    "text-to-video",
-    prompt="a cat dancing"
-)
+# All chain balances
+balances = client.all_balances()
+for chain, bal in balances.items():
+    print(f"{chain}: {bal.get('usdc', 0)} USDC")
 ```
 
-**Supported Chains:**
+### BNB Approval Check
 
-| Chain | Network ID | Token | Type |
-|-------|------------|-------|------|
-| Base | eip155:8453 | USDC | Mainnet |
-| Polygon | eip155:137 | USDC | Mainnet |
-| Base Sepolia | eip155:84532 | USDC | Testnet |
+BNB requires a one-time approval before first payment:
 
-All chains are gasless - the CDP facilitator handles all on-chain settlement.
+```python
+from moltspay import MoltsPay
 
-For testnet, use `client.faucet()` to get free test USDC.
+client = MoltsPay(chain="bnb")
+
+# Check approval status
+approvals = client.check_bnb_approvals()
+print(f"USDC approved: {approvals['usdc_approved']}")
+print(f"Allowance: {approvals['usdc_allowance']}")
+```
+
+**Note:** First BNB payment auto-approves. Approval costs ~$0.0001 in BNB gas (paid by client once).
 
 ### Async Support
-
-Full async/await support for high-performance applications:
 
 ```python
 import asyncio
@@ -233,8 +384,6 @@ asyncio.run(main())
 
 ### Error Handling
 
-Comprehensive exception types for robust error handling:
-
 ```python
 from moltspay import MoltsPay, InsufficientFunds, LimitExceeded, PaymentError
 
@@ -252,22 +401,28 @@ except PaymentError as e:
 
 ## API Reference
 
-### Complete Method List
+### Methods
 
 | Method | Description | Returns |
 |--------|-------------|---------|
-| `client.pay(provider_url, service_id, **params)` | Pay for and execute a service | `PaymentResult` |
-| `client.discover(provider_url)` | List services from a provider | `List[Service]` |
-| `client.balance()` | Get wallet USDC balance | `Balance` |
-| `client.limits()` | Get current spending limits | `Limits` |
-| `client.set_limits(max_per_tx, max_per_day)` | Set spending limits | `None` |
-| `client.faucet()` | Get free testnet USDC (1/day) | `FaucetResult` |
-| `client.fund(amount)` | Open funding page | `FundingResult` |
-| `client.address` | Property: wallet address | `str` |
+| `pay(url, service_id, **params)` | Pay for and execute a service | `PaymentResult` |
+| `discover(url)` | List services from a provider | `List[Service]` |
+| `balance(chain=None)` | Get wallet balance | `Balance` |
+| `all_balances()` | Get balances on all chains | `Dict[str, Dict]` |
+| `limits()` | Get current spending limits | `Limits` |
+| `set_limits(max_per_tx, max_per_day)` | Set spending limits | `None` |
+| `faucet()` | Get free testnet tokens | `FaucetResult` |
+| `fund(amount)` | Open Coinbase funding page | `FundingResult` |
+| `fund_qr(amount)` | Print funding QR code | `FundingResult` |
+| `check_bnb_approvals(chain="bnb")` | Check BNB approval status | `Dict` |
+
+### Properties
+
+| Property | Description | Type |
+|----------|-------------|------|
+| `address` | Wallet address (EVM or Solana) | `str` |
 
 ### The `.pay()` Method
-
-This is the **only** method for making payments:
 
 ```python
 result = client.pay(
@@ -276,44 +431,30 @@ result = client.pay(
     token: str = "USDC",       # "USDC" or "USDT"
     **params                   # Service-specific parameters
 )
-
-# Examples:
-result = client.pay("https://juai8.com/zen7", "text-to-video", prompt="a cat")
-result = client.pay("https://juai8.com/zen7", "image-to-video", image_url="https://...")
 ```
 
 ### PaymentResult Object
 
 ```python
 result.success      # bool - True if payment succeeded
-result.amount       # float - Amount paid (e.g., 0.99)
-result.currency     # str - "USDC" or "USDT"
+result.amount       # float - Amount paid
+result.token        # str - "USDC" or "USDT"
 result.tx_hash      # str - Blockchain transaction hash
 result.result       # Any - Service result (e.g., video URL)
 result.error        # str | None - Error message if failed
+result.explorer_url # str | None - Block explorer link
 ```
 
-### ⚠️ Methods That DO NOT Exist
-
-The following methods are sometimes incorrectly suggested by AI assistants, but **they do not exist**:
+### FaucetResult Object
 
 ```python
-# ❌ WRONG - These DO NOT exist:
-client.x402(...)           # NO! 
-client.transfer(...)       # NO!
-client.send(...)           # NO!
-client.execute(...)        # NO!
-client.call_service(...)   # NO!
-client.request(...)        # NO!
-client.make_payment(...)   # NO!
-
-# ✅ CORRECT - Use this:
-client.pay(provider_url, service_id, **params)
+result.success      # bool - True if faucet succeeded
+result.amount       # float - Amount received
+result.tx_hash      # str - Transaction hash
+result.error        # str | None - Error message if failed
 ```
 
 ## LangChain Integration
-
-Use MoltsPay as tools in your LangChain agents - let your AI autonomously pay for services!
 
 ```python
 from langchain.agents import initialize_agent, AgentType
@@ -336,8 +477,6 @@ result = agent.run("Generate a video of a cat dancing on the beach")
 
 ### Available Tools
 
-Two tools available for different use cases:
-
 ```python
 from moltspay.integrations.langchain import get_moltspay_tools
 
@@ -349,64 +488,82 @@ tools = get_moltspay_tools()  # Returns both tools
 | `MoltsPayTool` | Pay for and execute services |
 | `MoltsPayDiscoverTool` | Discover available services and prices |
 
+## Chain-Specific Notes
+
+### Solana
+
+- **Wallet:** Separate ed25519 keypair at `~/.moltspay/wallet-solana.json`
+- **Gas:** Server pays (~$0.001 SOL per tx)
+- **Token:** Circle USDC SPL token
+
+**USDC Mint Addresses:**
+| Network | Address |
+|---------|---------|
+| Mainnet | `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` |
+| Devnet | `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` |
+
+### BNB Chain
+
+- **Decimals:** 18 (not 6 like Base/Polygon)
+- **Gas:** Server pays (~$0.0001 per tx)
+- **Approval:** First payment requires one-time approval (client pays ~$0.0001)
+
+**Token Addresses:**
+| Token | Address |
+|-------|---------|
+| USDC | `0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d` |
+| USDT | `0x55d398326f99059fF775485246999027B3197955` |
+
+### Tempo Moderato
+
+- **Protocol:** MPP (Machine Payments Protocol)
+- **Gas:** Native gas-free
+- **Explorer:** https://explore.testnet.tempo.xyz
+
+**Stablecoins:**
+| Token | Address |
+|-------|---------|
+| pathUSD (USDC) | `0x20c0000000000000000000000000000000000000` |
+| alphaUSD (USDT) | `0x20c0000000000000000000000000000000000001` |
+
+## Live Example: Zen7 Video Generation
+
+Live service at `https://juai8.com/zen7`
+
+**Services:**
+- `text-to-video` - $0.01 USDC
+- `image-to-video` - $0.01 USDC
+
+**Supported Chains:** Base, Polygon, Solana, BNB, Tempo (mainnet & testnet)
+
+```python
+from moltspay import MoltsPay
+
+# Pay on Base (default)
+result = MoltsPay().pay(
+    "https://juai8.com/zen7", "text-to-video",
+    prompt="a happy cat"
+)
+
+# Pay on Solana
+result = MoltsPay(chain="solana_devnet").pay(
+    "https://juai8.com/zen7", "text-to-video",
+    prompt="a happy cat"
+)
+
+print(result.result)  # {"video_url": "https://..."}
+```
+
 ## CLI Compatibility
 
 Wallet format is fully compatible with the Node.js CLI:
 
 ```bash
 # Create wallet with Node CLI
-npx moltspay init --chain base
+npx moltspay init
 
 # Use same wallet in Python
 python -c "from moltspay import MoltsPay; print(MoltsPay().address)"
-```
-
-## How x402 Works
-
-```
-Your Agent                     Service Provider              Blockchain
-    │                               │                           │
-    │ Request service               │                           │
-    │ ──────────────────────────>   │                           │
-    │                               │                           │
-    │ 402 + price + wallet          │                           │
-    │ <──────────────────────────   │                           │
-    │                               │                           │
-    │ [Sign payment - NO GAS]       │                           │
-    │                               │                           │
-    │ Request + signed payment      │                           │
-    │ ──────────────────────────>   │ Verify & settle           │
-    │                               │ ─────────────────────────>│
-    │                               │                           │
-    │ 200 OK + result               │                           │
-    │ <──────────────────────────   │                           │
-```
-
-**Your agent never pays gas** - the CDP facilitator handles all on-chain settlement.
-
-## Use Cases
-
-- **AI Assistants** - Let your assistant pay for premium APIs
-- **Autonomous Agents** - Agents that can spend within limits
-- **Multi-Agent Systems** - Agents paying other agents for services
-- **AI Pipelines** - Pay-per-use for expensive compute steps
-
-## Running a Server (Accepting Payments)
-
-Want to accept payments for your AI services? See the **[Server Guide](docs/SERVER.md)**.
-
-Quick start:
-
-```bash
-# Install
-pip install moltspay
-
-# Create skill structure
-mkdir my_skill && cd my_skill
-# Add moltspay.services.json and __init__.py (see docs)
-
-# Start server
-moltspay-server ./my_skill --port 8402
 ```
 
 ## Related Projects
@@ -414,8 +571,9 @@ moltspay-server ./my_skill --port 8402
 - [moltspay (Node.js)](https://github.com/Yaqing2023/moltspay) - Node.js SDK and CLI
 - [x402 Protocol](https://www.x402.org/) - The HTTP payment standard
 
-## Links
+## Community & Support
 
+- **Discord:** https://discord.gg/QwCJgVBxVK
 - **Website:** https://moltspay.com
 - **PyPI:** https://pypi.org/project/moltspay/
 - **npm (Node.js):** https://www.npmjs.com/package/moltspay
