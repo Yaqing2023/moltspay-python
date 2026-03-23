@@ -383,19 +383,19 @@ class X402Client:
         if chain and chain.startswith("bnb"):
             payment_req = parse_402_response(response)
             
-            # Look for bnbSpender in accepts
+            # Find the correct accept entry for this BNB network
+            target_network = f"eip155:{97 if chain == 'bnb_testnet' else 56}"
+            bnb_accept = None
             bnb_spender = None
             for accept in payment_req.accepts:
-                extra = accept.get("extra", {})
-                if extra.get("bnbSpender"):
-                    bnb_spender = extra["bnbSpender"]
+                if accept.get("network") == target_network:
+                    bnb_accept = accept
+                    bnb_spender = accept.get("extra", {}).get("bnbSpender")
                     break
             
-            if bnb_spender:
+            if bnb_accept and bnb_spender:
                 from .facilitators.bnb import handle_bnb_payment
                 
-                # Get payment details from first accept
-                accept = payment_req.accepts[0]
                 private_key = account.key.hex()
                 if not private_key.startswith("0x"):
                     private_key = "0x" + private_key
@@ -405,9 +405,9 @@ class X402Client:
                     service=service_id,
                     params=params,
                     payment_details={
-                        "to": accept["payTo"],
-                        "amount": accept["amount"],
-                        "token": accept["asset"],
+                        "to": bnb_accept["payTo"],
+                        "amount": bnb_accept["amount"],
+                        "token": bnb_accept["asset"],
                         "spender": bnb_spender,
                     },
                     private_key=private_key,
@@ -417,16 +417,26 @@ class X402Client:
                 return PaymentResponse(
                     success=True,
                     result=result,
-                    network=accept.get("network", f"eip155:{97 if chain == 'bnb_testnet' else 56}"),
+                    network=target_network,
                 )
         
         # Solana chain - uses SPL token transfers
         if chain and chain.startswith("solana"):
             payment_req = parse_402_response(response)
-            accept = payment_req.accepts[0]
+            
+            # Find the correct accept entry for this Solana network
+            target_network = "solana:mainnet" if chain == "solana" else "solana:devnet"
+            solana_accept = None
+            for accept in payment_req.accepts:
+                if accept.get("network") == target_network:
+                    solana_accept = accept
+                    break
+            
+            if not solana_accept:
+                raise PaymentError(f"No payment requirement found for {chain}")
             
             # Get Solana fee payer if gasless mode
-            solana_fee_payer = accept.get("extra", {}).get("solanaFeePayer")
+            solana_fee_payer = solana_accept.get("extra", {}).get("solanaFeePayer")
             
             try:
                 from .facilitators.solana import handle_solana_payment
@@ -445,20 +455,19 @@ class X402Client:
                     service=service_id,
                     params=params,
                     payment_details={
-                        "payTo": accept["payTo"],
-                        "amount": accept["amount"],
-                        "asset": accept["asset"],
+                        "payTo": solana_accept["payTo"],
+                        "amount": solana_accept["amount"],
+                        "asset": solana_accept["asset"],
                         "solanaFeePayer": solana_fee_payer,
                     },
                     keypair=solana_wallet.keypair,
                     chain_name=chain,
                 )
                 
-                network = "solana:mainnet" if chain == "solana" else "solana:devnet"
                 return PaymentResponse(
                     success=True,
                     result=result,
-                    network=network,
+                    network=target_network,
                 )
             except ImportError:
                 raise PaymentError(

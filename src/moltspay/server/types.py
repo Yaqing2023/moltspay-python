@@ -140,6 +140,8 @@ CHAIN_TO_NETWORK: Dict[str, str] = {
     "bnb": "eip155:56",
     "bnb_testnet": "eip155:97",
     "tempo_moderato": "eip155:42431",
+    "solana": "solana:mainnet",
+    "solana_devnet": "solana:devnet",
 }
 
 # Token contract addresses by network
@@ -172,6 +174,14 @@ TOKEN_ADDRESSES: Dict[str, Dict[str, str]] = {
     "eip155:42431": {
         "USDC": "0x20c0000000000000000000000000000000000000",  # pathUSD
         "USDT": "0x20c0000000000000000000000000000000000001",  # alphaUSD
+    },
+    # Solana mainnet (SPL token mint addresses)
+    "solana:mainnet": {
+        "USDC": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # Circle USDC
+    },
+    # Solana devnet
+    "solana:devnet": {
+        "USDC": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",  # Devnet USDC
     },
 }
 

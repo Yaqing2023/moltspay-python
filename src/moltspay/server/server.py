@@ -285,12 +285,21 @@ class MoltsPayServer:
                 # Get BNB spender address if available
                 bnb_spender = server.registry.get_bnb_spender_address()
                 
+                # Get Solana fee payer if available
+                solana_fee_payer = server.registry.get_solana_fee_payer()
+                
                 # Build accepts for ALL chains and ALL tokens
                 for chain_config in server.chains:
                     token_addresses = TOKEN_ADDRESSES.get(chain_config.network, {})
                     # Get decimals for this network (default 6, BNB uses 18)
                     decimals = TOKEN_DECIMALS.get(chain_config.network, 6)
                     amount_units = str(int(config.price * (10 ** decimals)))
+                    
+                    # Determine wallet: use solana_wallet for Solana networks
+                    if chain_config.network.startswith("solana:"):
+                        wallet = server.provider.solana_wallet if server.provider else ""
+                    else:
+                        wallet = server.provider.wallet if server.provider else ""
                     
                     # Use service's accepted currencies, filtered by chain's supported tokens
                     for token in config.accepted_currencies:
@@ -300,7 +309,7 @@ class MoltsPayServer:
                                 "network": chain_config.network,
                                 "asset": token_addresses[token],
                                 "amount": amount_units,
-                                "payTo": server.provider.wallet if server.provider else "",
+                                "payTo": wallet,
                                 "maxTimeoutSeconds": 300,
                                 "extra": get_token_domain(chain_config.network, token),
                             }
@@ -309,6 +318,12 @@ class MoltsPayServer:
                                 accept_entry["extra"] = {
                                     **accept_entry.get("extra", {}),
                                     "bnbSpender": bnb_spender,
+                                }
+                            # Add solanaFeePayer for Solana networks
+                            if chain_config.network.startswith("solana:") and solana_fee_payer:
+                                accept_entry["extra"] = {
+                                    **accept_entry.get("extra", {}),
+                                    "solanaFeePayer": solana_fee_payer,
                                 }
                             accepts.append(accept_entry)
                 
