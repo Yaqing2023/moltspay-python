@@ -33,6 +33,7 @@ from .types import (
     TOKEN_ADDRESSES,
     TOKEN_DECIMALS,
     TOKEN_DOMAINS,
+    get_token_domain,
     CHAIN_TO_NETWORK,
     SOLANA_CHAINS,
     X402_VERSION,
@@ -199,7 +200,7 @@ class MoltsPayServer:
         selected_token = token if token and token in accepted else accepted[0]
         token_addresses = TOKEN_ADDRESSES.get(network, {})
         token_address = token_addresses.get(selected_token, "")
-        token_domain = TOKEN_DOMAINS.get(selected_token, TOKEN_DOMAINS["USDC"])
+        token_domain = get_token_domain(network, selected_token)
         
         return X402PaymentRequirements(
             scheme="exact",
@@ -301,7 +302,7 @@ class MoltsPayServer:
                                 "amount": amount_units,
                                 "payTo": server.provider.wallet if server.provider else "",
                                 "maxTimeoutSeconds": 300,
-                                "extra": TOKEN_DOMAINS.get(token, TOKEN_DOMAINS["USDC"]),
+                                "extra": get_token_domain(chain_config.network, token),
                             }
                             # Add bnbSpender for BNB networks
                             if chain_config.network in ("eip155:56", "eip155:97") and bnb_spender:
@@ -562,6 +563,10 @@ class MoltsPayServer:
                     "maxTimeoutSeconds": requirements.maxTimeoutSeconds,
                     "extra": requirements.extra,
                 }
+                
+                # Debug logging
+                print(f"[MoltsPay DEBUG] payment_dict: {json.dumps(payment_dict, indent=2)}")
+                print(f"[MoltsPay DEBUG] requirements_dict: {json.dumps(requirements_dict, indent=2)}")
                 
                 # Run async verify
                 verify_loop = asyncio.new_event_loop()

@@ -209,11 +209,44 @@ SOLANA_CHAINS: Dict[str, Dict[str, Any]] = {
     },
 }
 
-# EIP-712 domain info for tokens
-TOKEN_DOMAINS: Dict[str, Dict[str, str]] = {
-    "USDC": {"name": "USD Coin", "version": "2"},
-    "USDT": {"name": "Tether USD", "version": "2"},
+# EIP-712 domain info for tokens - PER NETWORK (must match on-chain exactly)
+TOKEN_DOMAINS: Dict[str, Dict[str, Dict[str, str]]] = {
+    # Base mainnet
+    "eip155:8453": {
+        "USDC": {"name": "USD Coin", "version": "2"},
+        "USDT": {"name": "Tether USD", "version": "2"},
+    },
+    # Base Sepolia testnet - USDC uses 'USDC' not 'USD Coin'
+    "eip155:84532": {
+        "USDC": {"name": "USDC", "version": "2"},
+    },
+    # Polygon mainnet
+    "eip155:137": {
+        "USDC": {"name": "USD Coin", "version": "2"},
+        "USDT": {"name": "(PoS) Tether USD", "version": "2"},
+    },
+    # Tempo Moderato testnet - TIP-20 stablecoins
+    "eip155:42431": {
+        "USDC": {"name": "pathUSD", "version": "1"},
+        "USDT": {"name": "alphaUSD", "version": "1"},
+    },
+    # BNB Smart Chain mainnet
+    "eip155:56": {
+        "USDC": {"name": "USD Coin", "version": "1"},
+        "USDT": {"name": "Tether USD", "version": "1"},
+    },
+    # BNB Smart Chain testnet
+    "eip155:97": {
+        "USDC": {"name": "USD Coin", "version": "1"},
+        "USDT": {"name": "Tether USD", "version": "1"},
+    },
 }
+
+
+def get_token_domain(network: str, token: str) -> Dict[str, str]:
+    """Get EIP-712 domain for a token on a specific network."""
+    network_domains = TOKEN_DOMAINS.get(network, TOKEN_DOMAINS.get("eip155:8453", {}))
+    return network_domains.get(token, {"name": "USD Coin", "version": "2"})
 
 # x402 protocol version
 X402_VERSION = 2

@@ -217,6 +217,13 @@ class CDPFacilitator(BaseFacilitator):
                 "paymentRequirements": requirements,
             }
             
+            # Debug logging
+            import json
+            print(f"[CDP DEBUG] Endpoint: {self.endpoint}/settle")
+            print(f"[CDP DEBUG] Mainnet: {self.use_mainnet}")
+            print(f"[CDP DEBUG] Request body:")
+            print(json.dumps(request_body, indent=2))
+            
             headers = {"Content-Type": "application/json"}
             
             if self.use_mainnet:
@@ -234,6 +241,11 @@ class CDPFacilitator(BaseFacilitator):
             )
             
             result = response.json()
+            
+            # Debug logging
+            print(f"[CDP DEBUG] Response status: {response.status_code}")
+            print(f"[CDP DEBUG] Response body:")
+            print(json.dumps(result, indent=2))
             
             if not response.is_success or not result.get("success"):
                 return SettleResult(

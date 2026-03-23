@@ -257,7 +257,8 @@ def build_payment_payload(
 class X402Client:
     """Low-level x402 protocol client."""
     
-    def __init__(self, timeout: float = 30.0):
+    def __init__(self, timeout: float = None):
+        """Initialize X402 client. timeout=None means no timeout (like Node.js fetch)."""
         self.timeout = timeout
         self._client = httpx.Client(timeout=timeout)
     
@@ -484,7 +485,8 @@ class X402Client:
 class AsyncX402Client:
     """Async version of x402 protocol client."""
     
-    def __init__(self, timeout: float = 30.0):
+    def __init__(self, timeout: float = None):
+        """Initialize async X402 client. timeout=None means no timeout (like Node.js fetch)."""
         self.timeout = timeout
         self._client = httpx.AsyncClient(timeout=timeout)
     

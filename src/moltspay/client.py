@@ -81,7 +81,7 @@ class MoltsPay:
         wallet_path: Optional[str] = None,
         private_key: Optional[str] = None,
         chain: str = "base",
-        timeout: float = 60.0,
+        timeout: float = None,
         solana_wallet_path: Optional[str] = None,
     ):
         """
@@ -91,7 +91,7 @@ class MoltsPay:
             wallet_path: Path to EVM wallet file (default: ~/.moltspay/wallet.json)
             private_key: EVM private key (if provided, ignores wallet_path)
             chain: Default chain for direct operations
-            timeout: HTTP timeout in seconds
+            timeout: HTTP timeout in seconds (None = no timeout, like Node.js)
             solana_wallet_path: Path to Solana wallet (default: ~/.moltspay/wallet-solana.json)
         """
         self._wallet = Wallet(
@@ -852,8 +852,9 @@ class AsyncMoltsPay:
         wallet_path: Optional[str] = None,
         private_key: Optional[str] = None,
         chain: str = "base",
-        timeout: float = 60.0,
+        timeout: float = None,
     ):
+        """Initialize async MoltsPay client. timeout=None means no timeout (like Node.js)."""
         self._wallet = Wallet(
             wallet_path=wallet_path,
             private_key=private_key,
