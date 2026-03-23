@@ -1,57 +1,83 @@
 #!/usr/bin/env python3
 """
-Demo: Fund wallet via QR code
+Demo: Fund wallet via Coinbase Onramp
 
 This demo shows how to fund your MoltsPay wallet using a debit card or Apple Pay.
 No crypto knowledge needed - just scan the QR code and pay!
 
+Supported chains:
+    - base (Base mainnet)
+    - polygon (Polygon mainnet)
+    - solana (Solana mainnet)
+
+For testnets, use testnet_faucet_demo.py instead.
+
 Usage:
-    python demos/fund_wallet_demo.py [amount] [--chain base|polygon]
+    python demos/fund_wallet_demo.py [amount] [--chain base|polygon|solana]
 
 Examples:
-    python demos/fund_wallet_demo.py 10           # Fund $10 on Base
-    python demos/fund_wallet_demo.py 20 --chain polygon  # Fund $20 on Polygon
+    python demos/fund_wallet_demo.py 10                    # Fund $10 on Base
+    python demos/fund_wallet_demo.py 20 --chain polygon    # Fund $20 on Polygon
+    python demos/fund_wallet_demo.py 15 --chain solana     # Fund $15 on Solana
 """
 
-import sys
+import argparse
 from moltspay import MoltsPay
 
 
+SUPPORTED_CHAINS = ["base", "polygon", "solana"]
+
+
 def main():
-    # Parse arguments
-    amount = 10.0  # Default $10
-    chain = "base"  # Default chain
+    parser = argparse.ArgumentParser(description="Fund MoltsPay wallet via Coinbase Onramp")
+    parser.add_argument("amount", type=float, nargs="?", default=10.0, help="Amount in USD (min $5)")
+    parser.add_argument("--chain", default="base", choices=SUPPORTED_CHAINS, help="Chain to fund")
+    args = parser.parse_args()
     
-    args = sys.argv[1:]
-    if args:
-        try:
-            amount = float(args[0])
-        except ValueError:
-            pass
+    amount = args.amount
+    chain = args.chain
     
-    if "--chain" in args:
-        idx = args.index("--chain")
-        if idx + 1 < len(args):
-            chain = args[idx + 1]
+    if amount < 5:
+        print("❌ Minimum funding amount is $5")
+        return
     
-    # Initialize client (auto-creates wallet if not exists)
+    # Initialize client
     client = MoltsPay(chain=chain)
     
-    print(f"🔑 Wallet initialized")
-    print(f"   Address: {client.address}")
-    print(f"   Chain: {chain}")
+    # Get appropriate wallet address
+    if chain == "solana":
+        address = client.solana_address
+        if not address:
+            print("❌ No Solana wallet found. Run a command with --chain solana first.")
+            return
+    else:
+        address = client.evm_address
+    
+    print(f"\n💳 Fund your MoltsPay wallet\n")
+    print(f"   Wallet:  {address}")
+    print(f"   Chain:   {chain.capitalize()}")
+    print(f"   Amount:  ${amount:.2f}")
+    print()
     
     # Generate funding QR code
-    # This calls the MoltsPay server API - no CDP credentials needed locally!
     result = client.fund_qr(amount, chain)
     
     if result.success:
-        print("✅ Scan the QR code above with your phone")
+        print("\n✅ Scan the QR code above with your phone")
         print("   Pay with US debit card or Apple Pay")
         print("   USDC will arrive in ~2 minutes")
     else:
-        print(f"❌ Error: {result.error}")
-        sys.exit(1)
+        print(f"\n❌ Error: {result.error}")
+        
+        # Chain-specific hints
+        if chain == "solana":
+            print("\n💡 Alternative: Transfer USDC directly to your Solana wallet")
+            print(f"   Address: {address}")
+        elif "testnet" in chain:
+            print("\n💡 For testnets, use the faucet instead:")
+            print(f"   python demos/testnet_faucet_demo.py --chain {chain}")
+    
+    print()
 
 
 if __name__ == "__main__":
