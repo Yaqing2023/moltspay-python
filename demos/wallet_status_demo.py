@@ -79,6 +79,46 @@ def main():
         else:
             print(f"     {chain_label} {usdc:.2f} USDC | {usdt:.2f} USDT")
     
+    # BNB Approvals (pay-for-success)
+    bnb_approval = client.check_bnb_approvals("bnb")
+    bnb_testnet_approval = client.check_bnb_approvals("bnb_testnet")
+    
+    if bnb_approval or bnb_testnet_approval:
+        print("")
+        print("   BNB Approvals (pay-for-success):")
+        
+        # BNB mainnet
+        if not bnb_approval.get("spender"):
+            print("     BNB:          ⚠️ No spender configured")
+            print("     └─ Run a payment first, or: moltspay approve --chain bnb --spender <address>")
+        else:
+            usdt_ok = bnb_approval.get("usdt", False)
+            usdc_ok = bnb_approval.get("usdc", False)
+            status = "✅" if (usdt_ok and usdc_ok) else "⚠️"
+            tokens = f"USDT{'✓' if usdt_ok else '✗'}, USDC{'✓' if usdc_ok else '✗'}"
+            print(f"     BNB:          {status} {tokens}")
+            
+            # Warning if no approvals and low BNB
+            bnb_native = all_balances.get("bnb", {}).get("native", 0)
+            if not usdc_ok and not usdt_ok and bnb_native < 0.0005:
+                print("     ⚠️  Need ~0.001 BNB for first approval tx. Get from exchange.")
+        
+        # BNB testnet
+        if not bnb_testnet_approval.get("spender"):
+            print("     BNB Testnet:  ⚠️ No spender configured")
+            print("     └─ Run a payment first, or: moltspay approve --chain bnb_testnet --spender <address>")
+        else:
+            usdt_ok = bnb_testnet_approval.get("usdt", False)
+            usdc_ok = bnb_testnet_approval.get("usdc", False)
+            status = "✅" if (usdt_ok and usdc_ok) else "⚠️"
+            tokens = f"USDT{'✓' if usdt_ok else '✗'}, USDC{'✓' if usdc_ok else '✗'}"
+            print(f"     BNB Testnet:  {status} {tokens}")
+            
+            # Warning if no approvals and low tBNB
+            tbnb_native = all_balances.get("bnb_testnet", {}).get("native", 0)
+            if not usdc_ok and not usdt_ok and tbnb_native < 0.0005:
+                print("     ⚠️  Need tBNB for approval. Run: moltspay faucet --chain bnb_testnet")
+    
     # Spending limits
     limits = client.limits()
     print("")

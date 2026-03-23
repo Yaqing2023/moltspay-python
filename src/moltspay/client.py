@@ -10,11 +10,24 @@ from .models import Service, Balance, Limits, PaymentResult, TokenSymbol, Fundin
 from .exceptions import InsufficientFunds, LimitExceeded, PaymentError
 from .chains import CHAINS, get_protocol
 
-# ERC20 ABI for balanceOf
+# ERC20 ABI for balanceOf and allowance
 ERC20_BALANCE_ABI = [
     {
         "inputs": [{"name": "account", "type": "address"}],
         "name": "balanceOf",
+        "outputs": [{"name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function"
+    }
+]
+
+ERC20_ALLOWANCE_ABI = [
+    {
+        "inputs": [
+            {"name": "owner", "type": "address"},
+            {"name": "spender", "type": "address"}
+        ],
+        "name": "allowance",
         "outputs": [{"name": "", "type": "uint256"}],
         "stateMutability": "view",
         "type": "function"
@@ -306,6 +319,63 @@ class MoltsPay:
             
         except Exception as e:
             return {"sol": 0.0, "usdc": 0.0}
+    
+    def check_bnb_approvals(self, chain: str = "bnb") -> Dict[str, Any]:
+        """
+        Check BNB chain approval status for pay-for-success flow.
+        
+        Args:
+            chain: "bnb" or "bnb_testnet"
+        
+        Returns:
+            Dict with 'usdc', 'usdt' (bool), and 'spender' (str or None)
+        """
+        if chain not in ("bnb", "bnb_testnet"):
+            return {"usdc": False, "usdt": False, "spender": None}
+        
+        result = {"usdc": False, "usdt": False, "spender": None}
+        
+        # Read spender from wallet config (saved during approve command)
+        try:
+            import json
+            from pathlib import Path
+            
+            wallet_path = self._wallet._wallet_path
+            if wallet_path and Path(wallet_path).exists():
+                with open(wallet_path) as f:
+                    wallet_data = json.load(f)
+                result["spender"] = wallet_data.get("approvals", {}).get(chain)
+        except Exception:
+            pass
+        
+        if not result["spender"]:
+            return result
+        
+        # Check allowances
+        try:
+            from web3 import Web3
+            
+            chain_config = CHAINS.get(chain)
+            if not chain_config:
+                return result
+            
+            w3 = Web3(Web3.HTTPProvider(chain_config["rpc"]))
+            owner = Web3.to_checksum_address(self.evm_address)
+            spender = Web3.to_checksum_address(result["spender"])
+            
+            for token_name in ["USDC", "USDT"]:
+                token_config = chain_config.get("tokens", {}).get(token_name)
+                if token_config:
+                    contract = w3.eth.contract(
+                        address=Web3.to_checksum_address(token_config["address"]),
+                        abi=ERC20_ALLOWANCE_ABI
+                    )
+                    allowance = contract.functions.allowance(owner, spender).call()
+                    result[token_name.lower()] = allowance > 0
+        except Exception:
+            pass
+        
+        return result
     
     def limits(self) -> Limits:
         """Get current spending limits."""
