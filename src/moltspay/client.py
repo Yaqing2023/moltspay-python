@@ -542,9 +542,13 @@ class MoltsPay:
             
             if response.status_code == 200:
                 data = response.json()
+                # Parse amount - handle comma-formatted numbers (e.g., "1,000,000" from Tempo)
+                raw_amount = data.get("amount", 1.0)
+                if isinstance(raw_amount, str):
+                    raw_amount = float(raw_amount.replace(",", ""))
                 return FaucetResult(
                     success=True,
-                    amount=data.get("amount", 1.0),
+                    amount=float(raw_amount),
                     chain=self._chain,
                     tx_hash=data.get("tx_hash"),
                 )
