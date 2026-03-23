@@ -129,12 +129,13 @@ class MoltsPay:
                 error="Minimum funding amount is $5"
             )
         
-        if chain not in ("base", "polygon"):
+        valid_chains = ("base", "polygon", "bnb", "tempo_moderato")
+        if chain not in valid_chains:
             return FundingResult(
                 success=False,
                 amount=amount,
                 chain=chain,
-                error=f"Invalid chain: {chain}. Use 'base' or 'polygon'"
+                error=f"Invalid chain: {chain}. Use one of: {', '.join(valid_chains)}"
             )
         
         try:
@@ -234,12 +235,13 @@ class MoltsPay:
             For mainnet USDC, use fund() or fund_qr() instead.
         """
         # Check if on testnet
-        if self._chain not in ("base_sepolia",):
+        valid_testnets = ("base_sepolia", "bnb_testnet", "tempo_moderato", "solana_devnet")
+        if self._chain not in valid_testnets:
             return FaucetResult(
                 success=False,
                 amount=0,
                 chain=self._chain,
-                error=f"Faucet only works on testnet. Current chain: {self._chain}. "
+                error=f"Faucet only works on testnets. Current chain: {self._chain}. "
                       f"Use MoltsPay(chain='base_sepolia') for testnet, or fund() for mainnet."
             )
         

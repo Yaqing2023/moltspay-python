@@ -180,10 +180,14 @@ def sign_eip3009_authorization(
     }
 
 
+# Chain ID mapping (also see chains.py for full config)
 CHAIN_IDS = {
     "base": 8453,
     "base_sepolia": 84532,
     "polygon": 137,
+    "tempo_moderato": 42431,
+    "bnb": 56,
+    "bnb_testnet": 97,
 }
 
 
@@ -322,7 +326,12 @@ class X402Client:
         chain: str = None,
     ) -> PaymentResponse:
         """
-        Full x402 flow: call, get 402, sign payment, retry.
+        Full payment flow: call, get 402, detect protocol, sign payment, retry.
+        
+        Supports multiple protocols:
+        - x402: Base, Polygon, Base Sepolia (EIP-3009 gasless)
+        - MPP: Tempo Moderato (on-chain TIP-20 transfer)
+        - BNB: BNB Chain (approval + EIP-712 intent)
         
         Args:
             base_url: Service base URL
@@ -330,7 +339,7 @@ class X402Client:
             params: Service parameters
             account: eth-account Account for signing
             token: Token to pay with ("USDC" or "USDT")
-            chain: Chain to pay on ("base", "base_sepolia", "polygon")
+            chain: Chain to pay on
         
         Returns:
             PaymentResponse with result and transaction info
@@ -344,6 +353,119 @@ class X402Client:
                 raise PaymentError(f"Service error: {response.status_code} {response.text}")
             return parse_payment_response(response)
         
+        # Detect protocol from 402 response headers
+        www_auth = response.headers.get("WWW-Authenticate", "")
+        
+        # MPP protocol (Tempo) - uses WWW-Authenticate: Payment header
+        if www_auth.startswith("Payment") and "tempo" in www_auth.lower():
+            from .facilitators.tempo import handle_mpp_payment
+            
+            private_key = account.key.hex()
+            if not private_key.startswith("0x"):
+                private_key = "0x" + private_key
+            
+            result = handle_mpp_payment(
+                server_url=base_url.rstrip("/"),
+                service=service_id,
+                params=params,
+                www_auth_header=www_auth,
+                private_key=private_key,
+            )
+            
+            return PaymentResponse(
+                success=True,
+                result=result,
+                network="eip155:42431",
+            )
+        
+        # BNB chain - check for bnbSpender in 402 response
+        if chain and chain.startswith("bnb"):
+            payment_req = parse_402_response(response)
+            
+            # Look for bnbSpender in accepts
+            bnb_spender = None
+            for accept in payment_req.accepts:
+                extra = accept.get("extra", {})
+                if extra.get("bnbSpender"):
+                    bnb_spender = extra["bnbSpender"]
+                    break
+            
+            if bnb_spender:
+                from .facilitators.bnb import handle_bnb_payment
+                
+                # Get payment details from first accept
+                accept = payment_req.accepts[0]
+                private_key = account.key.hex()
+                if not private_key.startswith("0x"):
+                    private_key = "0x" + private_key
+                
+                result = handle_bnb_payment(
+                    server_url=base_url.rstrip("/"),
+                    service=service_id,
+                    params=params,
+                    payment_details={
+                        "to": accept["payTo"],
+                        "amount": accept["amount"],
+                        "token": accept["asset"],
+                        "spender": bnb_spender,
+                    },
+                    private_key=private_key,
+                    chain_name=chain,
+                )
+                
+                return PaymentResponse(
+                    success=True,
+                    result=result,
+                    network=accept.get("network", f"eip155:{97 if chain == 'bnb_testnet' else 56}"),
+                )
+        
+        # Solana chain - uses SPL token transfers
+        if chain and chain.startswith("solana"):
+            payment_req = parse_402_response(response)
+            accept = payment_req.accepts[0]
+            
+            # Get Solana fee payer if gasless mode
+            solana_fee_payer = accept.get("extra", {}).get("solanaFeePayer")
+            
+            try:
+                from .facilitators.solana import handle_solana_payment
+                from .wallet_solana import SolanaWallet
+                
+                # Load Solana wallet
+                solana_wallet = SolanaWallet(create_if_missing=False)
+                if not solana_wallet.exists:
+                    raise PaymentError(
+                        "No Solana wallet found. Create one with: "
+                        "moltspay init --chain solana_devnet"
+                    )
+                
+                result = handle_solana_payment(
+                    server_url=base_url.rstrip("/"),
+                    service=service_id,
+                    params=params,
+                    payment_details={
+                        "payTo": accept["payTo"],
+                        "amount": accept["amount"],
+                        "asset": accept["asset"],
+                        "solanaFeePayer": solana_fee_payer,
+                    },
+                    keypair=solana_wallet.keypair,
+                    chain_name=chain,
+                )
+                
+                network = "solana:mainnet" if chain == "solana" else "solana:devnet"
+                return PaymentResponse(
+                    success=True,
+                    result=result,
+                    network=network,
+                )
+            except ImportError:
+                raise PaymentError(
+                    "Solana support requires 'solders' package. "
+                    "Install with: pip install solders solana"
+                )
+        
+        # Standard x402 flow (Base, Polygon, Base Sepolia)
         # Parse 402 response
         payment_req = parse_402_response(response)
         
