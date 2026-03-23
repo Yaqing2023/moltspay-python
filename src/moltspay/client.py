@@ -721,16 +721,15 @@ class MoltsPay:
         params: dict,
     ) -> PaymentResult:
         """Execute payment on Solana chains."""
+        import base64
+        import json as json_lib
+        
         # Get Solana wallet
         solana_wallet = self._get_solana_wallet()
         keypair = solana_wallet.keypair
         
-        # First, discover services and get payment details
-        # We need to make a request to get the 402 response with payment requirements
-        import httpx
-        
+        # Make request to get 402 response with payment requirements
         with httpx.Client(timeout=self._timeout) as client:
-            # Request service without payment to get 402 response
             response = client.post(
                 f"{service_url}/execute",
                 json={"service": service_id, "params": params, "chain": chain},
@@ -738,7 +737,6 @@ class MoltsPay:
             
             if response.status_code != 402:
                 if response.is_success:
-                    # Service didn't require payment?
                     return PaymentResult(
                         success=True,
                         amount=price,
@@ -748,12 +746,35 @@ class MoltsPay:
                     )
                 raise PaymentError(f"Unexpected response: {response.status_code}")
             
-            # Parse 402 payment requirements
-            payment_data = response.json()
-            payment_details = payment_data.get("paymentRequirements", {})
+            # Parse X-Payment-Required header (base64 encoded JSON)
+            payment_header = response.headers.get("x-payment-required")
+            if not payment_header:
+                raise PaymentError("Missing x-payment-required header in 402 response")
+            
+            try:
+                decoded = base64.b64decode(payment_header).decode("utf-8")
+                parsed = json_lib.loads(decoded)
+                
+                # Handle both v1 (array) and v2 (object with accepts) formats
+                if isinstance(parsed, list):
+                    requirements = parsed
+                elif isinstance(parsed, dict) and "accepts" in parsed:
+                    requirements = parsed["accepts"]
+                else:
+                    requirements = [parsed]
+            except Exception as e:
+                raise PaymentError(f"Invalid x-payment-required header: {e}")
+            
+            # Find Solana requirement
+            network = "solana:mainnet" if chain == "solana" else "solana:devnet"
+            payment_details = None
+            for req in requirements:
+                if req.get("network") == network:
+                    payment_details = req
+                    break
             
             if not payment_details:
-                raise PaymentError("No payment requirements in 402 response")
+                raise PaymentError(f"No payment requirement found for {chain}")
         
         # Execute Solana payment
         solana_mod = _get_solana_facilitator()
