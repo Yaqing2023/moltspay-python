@@ -152,6 +152,8 @@ def get_solana_keypair(wallet_data: SolanaWalletData) -> "Keypair":
     """
     Get Solana Keypair object from wallet data.
     
+    Supports both base58 (Node.js SDK) and base64 (Python SDK) encoded keys.
+    
     Args:
         wallet_data: Wallet data with secret key
     
@@ -160,9 +162,31 @@ def get_solana_keypair(wallet_data: SolanaWalletData) -> "Keypair":
     """
     check_solana_available()
     
-    # Decode secret key (base64)
-    secret_bytes = base64.b64decode(wallet_data.secret_key)
-    return Keypair.from_bytes(secret_bytes)
+    secret_key = wallet_data.secret_key
+    
+    # Try base58 first (Node.js SDK format)
+    try:
+        from solders.keypair import Keypair
+        # base58 decode - the Node.js SDK stores as base58
+        import base58
+        secret_bytes = base58.b58decode(secret_key)
+        if len(secret_bytes) == 64:
+            return Keypair.from_bytes(secret_bytes)
+    except Exception:
+        pass
+    
+    # Fallback to base64 (Python SDK format)
+    try:
+        secret_bytes = base64.b64decode(secret_key)
+        if len(secret_bytes) == 64:
+            return Keypair.from_bytes(secret_bytes)
+    except Exception:
+        pass
+    
+    raise WalletError(
+        f"Failed to decode Solana secret key. "
+        f"Expected 64 bytes in base58 or base64 format, got {len(secret_key)} chars."
+    )
 
 
 class SolanaWallet:

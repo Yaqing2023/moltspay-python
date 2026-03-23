@@ -7,6 +7,25 @@ from .wallet import Wallet
 from .x402 import X402Client, AsyncX402Client
 from .models import Service, Balance, Limits, PaymentResult, TokenSymbol, FundingResult, FaucetResult
 from .exceptions import InsufficientFunds, LimitExceeded, PaymentError
+from .chains import CHAINS, get_protocol
+
+# Lazy import for Solana (optional dependency)
+_solana_wallet_module = None
+_solana_facilitator_module = None
+
+def _get_solana_wallet():
+    """Lazy import SolanaWallet to avoid requiring solders for EVM-only users."""
+    global _solana_wallet_module
+    if _solana_wallet_module is None:
+        from . import wallet_solana as _solana_wallet_module
+    return _solana_wallet_module
+
+def _get_solana_facilitator():
+    """Lazy import Solana facilitator."""
+    global _solana_facilitator_module
+    if _solana_facilitator_module is None:
+        from .facilitators import solana as _solana_facilitator_module
+    return _solana_facilitator_module
 
 # Server-side APIs
 ONRAMP_API = "https://moltspay.com/api/v1/onramp"
@@ -38,15 +57,17 @@ class MoltsPay:
         private_key: Optional[str] = None,
         chain: str = "base",
         timeout: float = 60.0,
+        solana_wallet_path: Optional[str] = None,
     ):
         """
         Initialize MoltsPay client.
         
         Args:
-            wallet_path: Path to wallet file (default: ~/.moltspay/wallet.json)
-            private_key: Private key (if provided, ignores wallet_path)
-            chain: Default chain for direct operations ("base" or "polygon")
+            wallet_path: Path to EVM wallet file (default: ~/.moltspay/wallet.json)
+            private_key: EVM private key (if provided, ignores wallet_path)
+            chain: Default chain for direct operations
             timeout: HTTP timeout in seconds
+            solana_wallet_path: Path to Solana wallet (default: ~/.moltspay/wallet-solana.json)
         """
         self._wallet = Wallet(
             wallet_path=wallet_path,
@@ -55,11 +76,47 @@ class MoltsPay:
         )
         self._x402 = X402Client(timeout=timeout)
         self._chain = chain
+        self._timeout = timeout
+        
+        # Solana wallet (lazy loaded)
+        self._solana_wallet = None
+        self._solana_wallet_path = solana_wallet_path
+    
+    def _is_solana_chain(self, chain: str = None) -> bool:
+        """Check if chain is a Solana chain."""
+        chain = chain or self._chain
+        return chain in ("solana", "solana_devnet")
+    
+    def _get_solana_wallet(self):
+        """Get or create Solana wallet (lazy loading)."""
+        if self._solana_wallet is None:
+            wallet_mod = _get_solana_wallet()
+            self._solana_wallet = wallet_mod.SolanaWallet(
+                wallet_path=self._solana_wallet_path,
+                create_if_missing=True,
+            )
+        return self._solana_wallet
     
     @property
     def address(self) -> str:
-        """Get wallet address."""
+        """Get wallet address for current chain."""
+        if self._is_solana_chain():
+            return self.solana_address
         return self._wallet.address
+    
+    @property
+    def evm_address(self) -> str:
+        """Get EVM wallet address."""
+        return self._wallet.address
+    
+    @property
+    def solana_address(self) -> Optional[str]:
+        """Get Solana wallet address (creates wallet if needed)."""
+        try:
+            wallet = self._get_solana_wallet()
+            return wallet.address
+        except Exception:
+            return None
     
     def discover(self, service_url: str) -> List[Service]:
         """
@@ -295,6 +352,7 @@ class MoltsPay:
         service_url: str,
         service_id: str,
         token: str = "USDC",
+        chain: str = None,
         **params,
     ) -> PaymentResult:
         """
@@ -304,6 +362,7 @@ class MoltsPay:
             service_url: Base URL of the service provider
             service_id: Service ID to call
             token: Token to pay with ("USDC" or "USDT", default: "USDC")
+            chain: Override chain for this payment (default: client's chain)
             **params: Service parameters
         
         Returns:
@@ -314,13 +373,16 @@ class MoltsPay:
             LimitExceeded: Transaction exceeds limits
             PaymentError: Payment or service failed
         """
+        # Use provided chain or default
+        chain = chain or self._chain
+        
         # Normalize token
         token = token.upper()
         if token not in ("USDC", "USDT"):
             raise PaymentError(f"Unsupported token: {token}. Use USDC or USDT.")
         
-        # USDT requires gas for on-chain approval (no EIP-2612 support)
-        if token == "USDT":
+        # USDT requires gas for on-chain approval (no EIP-2612 support) - EVM only
+        if token == "USDT" and not self._is_solana_chain(chain):
             bal = self.balance()
             if bal.native < 0.0001:
                 raise PaymentError(
@@ -352,35 +414,17 @@ class MoltsPay:
                 raise LimitExceeded("daily", self._wallet.limits.max_per_day, service.price)
         
         try:
-            # Execute x402 payment flow
-            payment_response = self._x402.pay_and_call(
-                service_url,
-                service_id,
-                params,
-                self._wallet._account,
-                token=token,
-                chain=self._chain,
-            )
+            # Route to appropriate facilitator based on chain
+            if self._is_solana_chain(chain):
+                result = self._pay_solana(service_url, service_id, service.price, token, chain, params)
+            else:
+                result = self._pay_evm(service_url, service_id, service.price, token, chain, params)
             
             # Record spend on success
-            self._wallet.record_spend(service.price)
+            if result.success:
+                self._wallet.record_spend(service.price)
             
-            # Build explorer URL only for real on-chain tx_hash
-            # (not internal IDs like "moltspay:xxx")
-            explorer_url = None
-            if payment_response.tx_hash and not payment_response.tx_hash.startswith("moltspay:"):
-                chain_config = self._wallet.chain_config
-                explorer_url = f"{chain_config['explorer']}{payment_response.tx_hash}"
-            
-            return PaymentResult(
-                success=True,
-                tx_hash=payment_response.tx_hash,
-                amount=service.price,
-                token=token,
-                service_id=service_id,
-                result=payment_response.result,
-                explorer_url=explorer_url,
-            )
+            return result
             
         except PaymentError:
             raise
@@ -392,6 +436,114 @@ class MoltsPay:
                 service_id=service_id,
                 error=str(e),
             )
+    
+    def _pay_evm(
+        self,
+        service_url: str,
+        service_id: str,
+        price: float,
+        token: str,
+        chain: str,
+        params: dict,
+    ) -> PaymentResult:
+        """Execute payment on EVM chains (Base, Polygon, etc.)."""
+        payment_response = self._x402.pay_and_call(
+            service_url,
+            service_id,
+            params,
+            self._wallet._account,
+            token=token,
+            chain=chain,
+        )
+        
+        # Build explorer URL only for real on-chain tx_hash
+        explorer_url = None
+        if payment_response.tx_hash and not payment_response.tx_hash.startswith("moltspay:"):
+            chain_config = CHAINS.get(chain, {})
+            if chain_config:
+                explorer_url = f"{chain_config['explorer']}/tx/{payment_response.tx_hash}"
+        
+        return PaymentResult(
+            success=True,
+            tx_hash=payment_response.tx_hash,
+            amount=price,
+            token=token,
+            service_id=service_id,
+            result=payment_response.result,
+            explorer_url=explorer_url,
+        )
+    
+    def _pay_solana(
+        self,
+        service_url: str,
+        service_id: str,
+        price: float,
+        token: str,
+        chain: str,
+        params: dict,
+    ) -> PaymentResult:
+        """Execute payment on Solana chains."""
+        # Get Solana wallet
+        solana_wallet = self._get_solana_wallet()
+        keypair = solana_wallet.keypair
+        
+        # First, discover services and get payment details
+        # We need to make a request to get the 402 response with payment requirements
+        import httpx
+        
+        with httpx.Client(timeout=self._timeout) as client:
+            # Request service without payment to get 402 response
+            response = client.post(
+                f"{service_url}/execute",
+                json={"service": service_id, "params": params, "chain": chain},
+            )
+            
+            if response.status_code != 402:
+                if response.is_success:
+                    # Service didn't require payment?
+                    return PaymentResult(
+                        success=True,
+                        amount=price,
+                        token=token,
+                        service_id=service_id,
+                        result=response.json().get("result"),
+                    )
+                raise PaymentError(f"Unexpected response: {response.status_code}")
+            
+            # Parse 402 payment requirements
+            payment_data = response.json()
+            payment_details = payment_data.get("paymentRequirements", {})
+            
+            if not payment_details:
+                raise PaymentError("No payment requirements in 402 response")
+        
+        # Execute Solana payment
+        solana_mod = _get_solana_facilitator()
+        result = solana_mod.handle_solana_payment(
+            server_url=service_url,
+            service=service_id,
+            params=params,
+            payment_details=payment_details,
+            keypair=keypair,
+            chain_name=chain,
+        )
+        
+        # Build explorer URL
+        tx_hash = result.get("payment", {}).get("transaction") if isinstance(result, dict) else None
+        explorer_url = None
+        if tx_hash:
+            cluster = "" if chain == "solana" else "?cluster=devnet"
+            explorer_url = f"https://solscan.io/tx/{tx_hash}{cluster}"
+        
+        return PaymentResult(
+            success=True,
+            tx_hash=tx_hash,
+            amount=price,
+            token=token,
+            service_id=service_id,
+            result=result,
+            explorer_url=explorer_url,
+        )
     
     def close(self):
         """Close the client."""
