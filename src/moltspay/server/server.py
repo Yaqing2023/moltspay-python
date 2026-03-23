@@ -599,7 +599,28 @@ class MoltsPayServer:
                     })
                 print(f"[MoltsPay] Payment verified")
                 
-                # Execute skill FIRST (pay on success)
+                # Check if Solana - must settle BEFORE skill execution (blockhash expiry)
+                is_solana = network.startswith("solana:")
+                settlement = None
+                
+                if is_solana:
+                    print(f"[MoltsPay] Solana detected - settling payment FIRST (blockhash expiry protection)")
+                    settle_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(settle_loop)
+                    try:
+                        settlement = settle_loop.run_until_complete(
+                            server.registry.settle(payment_dict, requirements_dict)
+                        )
+                    finally:
+                        settle_loop.close()
+                    
+                    if not settlement.success:
+                        return self._send_json(402, {
+                            "error": f"Payment settlement failed: {settlement.error}",
+                        })
+                    print(f"[MoltsPay] Payment settled: {settlement.transaction}")
+                
+                # Execute skill
                 timeout_seconds = int(os.environ.get("SKILL_TIMEOUT_SECONDS", "1200"))
                 print(f"[MoltsPay] Executing skill: {service_id} (timeout: {timeout_seconds}s)")
                 
@@ -629,21 +650,22 @@ class MoltsPayServer:
                         "message": str(e),
                     })
                 
-                # Skill succeeded - now settle payment
-                print(f"[MoltsPay] Skill succeeded, settling payment...")
-                settle_loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(settle_loop)
-                try:
-                    settlement = settle_loop.run_until_complete(
-                        server.registry.settle(payment_dict, requirements_dict)
-                    )
-                finally:
-                    settle_loop.close()
-                
-                if settlement.success:
-                    print(f"[MoltsPay] Payment settled: {settlement.transaction}")
-                else:
-                    print(f"[MoltsPay] Settlement warning: {settlement.error}")
+                # Settle payment (skip if already done for Solana)
+                if not is_solana:
+                    print(f"[MoltsPay] Skill succeeded, settling payment...")
+                    settle_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(settle_loop)
+                    try:
+                        settlement = settle_loop.run_until_complete(
+                            server.registry.settle(payment_dict, requirements_dict)
+                        )
+                    finally:
+                        settle_loop.close()
+                    
+                    if settlement.success:
+                        print(f"[MoltsPay] Payment settled: {settlement.transaction}")
+                    else:
+                        print(f"[MoltsPay] Settlement warning: {settlement.error}")
                 
                 # Build response
                 extra_headers = {}
