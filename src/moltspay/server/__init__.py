@@ -52,7 +52,13 @@ Environment Variables (in ~/.moltspay/.env):
 """
 
 from .server import MoltsPayServer
-from .facilitator import CDPFacilitator
+from .facilitators import (
+    FacilitatorRegistry,
+    CDPFacilitator,
+    BNBFacilitator,
+    TempoFacilitator,
+    SolanaFacilitator,
+)
 from .types import (
     ServicesManifest,
     ServiceConfig,
@@ -61,13 +67,18 @@ from .types import (
     RegisteredSkill,
     X402PaymentPayload,
     X402PaymentRequirements,
-    VerifyResult,
-    SettleResult,
+    CHAIN_TO_NETWORK,
+    TOKEN_ADDRESSES,
+    SOLANA_CHAINS,
 )
 
 __all__ = [
     "MoltsPayServer",
+    "FacilitatorRegistry",
     "CDPFacilitator",
+    "BNBFacilitator",
+    "TempoFacilitator",
+    "SolanaFacilitator",
     "ServicesManifest",
     "ServiceConfig",
     "ProviderConfig",
@@ -75,6 +86,7 @@ __all__ = [
     "RegisteredSkill",
     "X402PaymentPayload",
     "X402PaymentRequirements",
-    "VerifyResult",
-    "SettleResult",
+    "CHAIN_TO_NETWORK",
+    "TOKEN_ADDRESSES",
+    "SOLANA_CHAINS",
 ]

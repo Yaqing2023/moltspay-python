@@ -193,7 +193,9 @@ class MoltsPay:
         Query token balances on an EVM chain via RPC.
         
         Returns:
-            Dict with 'usdc', 'usdt', 'native' balances
+            Dict with token balances. Always includes 'usdc', 'usdt', 'native'.
+            Tempo also includes 'pathUSD', 'alphaUSD', 'betaUSD', 'thetaUSD'.
+            For Tempo: pathUSD maps to usdc, alphaUSD maps to usdt.
         """
         chain_config = CHAINS.get(chain)
         if not chain_config:
@@ -209,29 +211,39 @@ class MoltsPay:
             native_wei = w3.eth.get_balance(address)
             native = float(w3.from_wei(native_wei, 'ether'))
             
-            # Get USDC balance
-            usdc = 0.0
-            usdc_config = chain_config.get("tokens", {}).get("USDC")
-            if usdc_config:
-                usdc_contract = w3.eth.contract(
-                    address=Web3.to_checksum_address(usdc_config["address"]),
-                    abi=ERC20_BALANCE_ABI
-                )
-                usdc_raw = usdc_contract.functions.balanceOf(address).call()
-                usdc = usdc_raw / (10 ** usdc_config["decimals"])
+            result = {"native": native, "usdc": 0.0, "usdt": 0.0}
             
-            # Get USDT balance (if available)
-            usdt = 0.0
-            usdt_config = chain_config.get("tokens", {}).get("USDT")
-            if usdt_config:
-                usdt_contract = w3.eth.contract(
-                    address=Web3.to_checksum_address(usdt_config["address"]),
-                    abi=ERC20_BALANCE_ABI
-                )
-                usdt_raw = usdt_contract.functions.balanceOf(address).call()
-                usdt = usdt_raw / (10 ** usdt_config["decimals"])
+            # Get all token balances from chain config
+            tokens = chain_config.get("tokens", {})
+            for token_name, token_config in tokens.items():
+                try:
+                    token_contract = w3.eth.contract(
+                        address=Web3.to_checksum_address(token_config["address"]),
+                        abi=ERC20_BALANCE_ABI
+                    )
+                    raw_balance = token_contract.functions.balanceOf(address).call()
+                    balance = raw_balance / (10 ** token_config["decimals"])
+                    
+                    # Store with original name
+                    if token_name in ("USDC", "USDT"):
+                        result[token_name.lower()] = balance
+                    else:
+                        result[token_name] = balance
+                        
+                        # Tempo mapping: pathUSD → usdc, alphaUSD → usdt
+                        if chain == "tempo_moderato":
+                            if token_name == "pathUSD":
+                                result["usdc"] = balance
+                            elif token_name == "alphaUSD":
+                                result["usdt"] = balance
+                                
+                except Exception:
+                    if token_name in ("USDC", "USDT"):
+                        result[token_name.lower()] = 0.0
+                    else:
+                        result[token_name] = 0.0
             
-            return {"usdc": usdc, "usdt": usdt, "native": native}
+            return result
             
         except Exception as e:
             # Return zeros if query fails
@@ -251,7 +263,7 @@ class MoltsPay:
                 ...
             }
         """
-        evm_chains = ["base", "polygon", "base_sepolia", "bnb", "bnb_testnet"]
+        evm_chains = ["base", "polygon", "base_sepolia", "bnb", "bnb_testnet", "tempo_moderato"]
         results = {}
         
         # Query EVM chains in parallel

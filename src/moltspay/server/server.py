@@ -31,18 +31,14 @@ from .types import (
     X402PaymentPayload,
     X402PaymentRequirements,
     TOKEN_ADDRESSES,
+    TOKEN_DECIMALS,
     TOKEN_DOMAINS,
+    CHAIN_TO_NETWORK,
+    SOLANA_CHAINS,
     X402_VERSION,
 )
-from .facilitator import CDPFacilitator, load_env_file
-
-
-# Chain name to network ID mapping
-CHAIN_TO_NETWORK = {
-    "base": "eip155:8453",
-    "base_sepolia": "eip155:84532",
-    "polygon": "eip155:137",
-}
+from .facilitators import FacilitatorRegistry
+from .facilitators.cdp import load_env_file
 
 
 class MoltsPayServer:
@@ -78,8 +74,8 @@ class MoltsPayServer:
         self.skills: Dict[str, RegisteredSkill] = {}
         self.manifests: List[ServicesManifest] = []
         
-        # Initialize facilitator
-        self.facilitator = CDPFacilitator()
+        # Initialize facilitator registry
+        self.registry = FacilitatorRegistry()
         
         # Load all skill paths
         for skill_path in skill_paths:
@@ -101,20 +97,33 @@ class MoltsPayServer:
             print(f"[MoltsPay] Provider: {self.provider.name}")
             print(f"[MoltsPay] Receive wallet: {self.provider.wallet}")
         print(f"[MoltsPay] Chains: {chain_names} (multi-chain enabled)")
-        print(f"[MoltsPay] Facilitator: {self.facilitator.get_config_summary()}")
-        print(f"[MoltsPay] Protocol: x402 (gasless for both client AND server)")
+        print(f"[MoltsPay] Facilitators: {', '.join(self.registry.list_facilitators())}")
+        print(f"[MoltsPay] Supported networks: {', '.join(self.registry.list_supported_networks())}")
+        print(f"[MoltsPay] Protocol: x402 + MPP")
     
     def _get_provider_chains(self) -> List[ChainConfig]:
         """Get supported chains from provider config."""
         if self.provider and self.provider.chains:
-            # Fill in missing network values from chain name
+            # Use get_chains() to handle both string and object formats
+            chains = self.provider.get_chains()
             result = []
-            for c in self.provider.chains:
-                network = c.network or CHAIN_TO_NETWORK.get(c.chain, "eip155:8453")
+            for c in chains:
+                # Determine network from chain name
+                if c.chain.startswith("solana"):
+                    # Solana chains use different network format
+                    network = c.network or SOLANA_CHAINS.get(c.chain, {}).get("network", "solana:devnet")
+                    # Use solana_wallet if available
+                    wallet = c.wallet or (self.provider.solana_wallet if self.provider else None)
+                else:
+                    # EVM chains
+                    network = c.network or CHAIN_TO_NETWORK.get(c.chain, "eip155:8453")
+                    wallet = c.wallet or (self.provider.wallet if self.provider else None)
+                
                 result.append(ChainConfig(
                     chain=c.chain,
                     network=network,
                     tokens=c.tokens,
+                    wallet=wallet,
                 ))
             return result
         
@@ -263,25 +272,44 @@ class MoltsPayServer:
                 self.end_headers()
                 self.wfile.write(json.dumps(data, indent=2).encode())
             
-            def _send_402(self, config: ServiceConfig):
-                """Send 402 Payment Required response with all supported chains."""
+            def _send_402(self, config: ServiceConfig, client_chain: str = None):
+                """Send 402 Payment Required response with all supported chains.
+                
+                Args:
+                    config: Service configuration
+                    client_chain: Client's requested chain (only adds MPP header if tempo_moderato)
+                """
                 accepts = []
+                
+                # Get BNB spender address if available
+                bnb_spender = server.registry.get_bnb_spender_address()
                 
                 # Build accepts for ALL chains and ALL tokens
                 for chain_config in server.chains:
                     token_addresses = TOKEN_ADDRESSES.get(chain_config.network, {})
+                    # Get decimals for this network (default 6, BNB uses 18)
+                    decimals = TOKEN_DECIMALS.get(chain_config.network, 6)
+                    amount_units = str(int(config.price * (10 ** decimals)))
+                    
                     # Use service's accepted currencies, filtered by chain's supported tokens
                     for token in config.accepted_currencies:
                         if token in chain_config.tokens and token in token_addresses:
-                            accepts.append({
+                            accept_entry = {
                                 "scheme": "exact",
                                 "network": chain_config.network,
                                 "asset": token_addresses[token],
-                                "amount": str(int(config.price * 1e6)),
+                                "amount": amount_units,
                                 "payTo": server.provider.wallet if server.provider else "",
                                 "maxTimeoutSeconds": 300,
                                 "extra": TOKEN_DOMAINS.get(token, TOKEN_DOMAINS["USDC"]),
-                            })
+                            }
+                            # Add bnbSpender for BNB networks
+                            if chain_config.network in ("eip155:56", "eip155:97") and bnb_spender:
+                                accept_entry["extra"] = {
+                                    **accept_entry.get("extra", {}),
+                                    "bnbSpender": bnb_spender,
+                                }
+                            accepts.append(accept_entry)
                 
                 payment_required = {
                     "x402Version": X402_VERSION,
@@ -299,6 +327,22 @@ class MoltsPayServer:
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.send_header("X-Payment-Required", encoded)
+                
+                # Add MPP WWW-Authenticate header ONLY if client requested tempo_moderato
+                # This prevents MPP from overriding x402 on other chains
+                if client_chain == "tempo_moderato":
+                    tempo = server.registry.get_tempo_facilitator()
+                    tempo_chain = next((c for c in server.chains if c.network == "eip155:42431"), None)
+                    if tempo and tempo_chain:
+                        mpp_challenge = tempo.generate_mpp_challenge(
+                            service_id=config.id,
+                            service_name=config.name,
+                            price=config.price,
+                            wallet=server.provider.wallet if server.provider else "",
+                            provider_name=server.provider.name if server.provider else "MoltsPay",
+                        )
+                        self.send_header("WWW-Authenticate", mpp_challenge["header"])
+                
                 self.end_headers()
                 
                 response = {
@@ -424,14 +468,13 @@ class MoltsPayServer:
             
             def _handle_health(self):
                 """GET /health - Health check."""
-                facilitator_health = server.facilitator.health_check()
-                
                 total_services = sum(len(m.services) for m in server.manifests)
                 
-                self._send_json(200 if facilitator_health.get("healthy") else 503, {
-                    "status": "healthy" if facilitator_health.get("healthy") else "degraded",
+                self._send_json(200, {
+                    "status": "healthy",
                     "chains": [c.chain for c in server.chains],
-                    "facilitator": facilitator_health,
+                    "facilitators": server.registry.list_facilitators(),
+                    "supported_networks": server.registry.list_supported_networks(),
                     "services": total_services,
                     "registered": len(server.skills),
                 })
@@ -455,7 +498,7 @@ class MoltsPayServer:
                 
                 # If no payment, return 402
                 if not payment_header:
-                    return self._send_402(skill.config)
+                    return self._send_402(skill.config, client_chain=body.get("chain"))
                 
                 # Parse payment payload
                 try:
@@ -498,15 +541,43 @@ class MoltsPayServer:
                 # Build requirements
                 requirements = server._build_payment_requirements(skill.config, network=network, token=payment_token)
                 
-                # Verify payment
+                # Verify payment using registry
                 print(f"[MoltsPay] Verifying payment on {network}...")
-                verify_result = server.facilitator.verify(payment, requirements)
+                
+                # Build payment payload dict for registry
+                payment_dict = {
+                    "x402Version": payment.x402Version,
+                    "payload": payment.payload,
+                    "accepted": payment.accepted,
+                    "resource": payment.resource,
+                    "scheme": payment.scheme,
+                    "network": network,
+                }
+                requirements_dict = {
+                    "scheme": requirements.scheme,
+                    "network": requirements.network,
+                    "asset": requirements.asset,
+                    "amount": requirements.amount,
+                    "payTo": requirements.payTo,
+                    "maxTimeoutSeconds": requirements.maxTimeoutSeconds,
+                    "extra": requirements.extra,
+                }
+                
+                # Run async verify
+                verify_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(verify_loop)
+                try:
+                    verify_result = verify_loop.run_until_complete(
+                        server.registry.verify(payment_dict, requirements_dict)
+                    )
+                finally:
+                    verify_loop.close()
+                
                 if not verify_result.valid:
                     return self._send_json(402, {
                         "error": f"Payment verification failed: {verify_result.error}",
-                        "facilitator": verify_result.facilitator,
                     })
-                print(f"[MoltsPay] Verified by {verify_result.facilitator}")
+                print(f"[MoltsPay] Payment verified")
                 
                 # Execute skill FIRST (pay on success)
                 timeout_seconds = int(os.environ.get("SKILL_TIMEOUT_SECONDS", "1200"))
@@ -540,7 +611,15 @@ class MoltsPayServer:
                 
                 # Skill succeeded - now settle payment
                 print(f"[MoltsPay] Skill succeeded, settling payment...")
-                settlement = server.facilitator.settle(payment, requirements)
+                settle_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(settle_loop)
+                try:
+                    settlement = settle_loop.run_until_complete(
+                        server.registry.settle(payment_dict, requirements_dict)
+                    )
+                finally:
+                    settle_loop.close()
+                
                 if settlement.success:
                     print(f"[MoltsPay] Payment settled: {settlement.transaction}")
                 else:
@@ -553,7 +632,6 @@ class MoltsPayServer:
                         "success": True,
                         "transaction": settlement.transaction,
                         "network": network,
-                        "facilitator": settlement.facilitator,
                     }
                     extra_headers["X-Payment-Response"] = base64.b64encode(
                         json.dumps(response_payload).encode()
@@ -565,7 +643,7 @@ class MoltsPayServer:
                     "payment": {
                         "transaction": settlement.transaction,
                         "status": "settled" if settlement.success else "pending",
-                        "facilitator": settlement.facilitator,
+                        "network": network,
                     } if settlement.success else {"status": "pending"},
                 }, extra_headers)
         

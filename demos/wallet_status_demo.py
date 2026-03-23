@@ -64,19 +64,33 @@ def main():
         "base_sepolia": "Base Sepolia",
         "bnb": "BNB",
         "bnb_testnet": "BNB Testnet",
+        "tempo_moderato": "Tempo Moderato",
     }
     
     for chain, balances in all_balances.items():
         chain_label = chain_names.get(chain, chain).ljust(14)
-        usdc = balances.get("usdc", 0.0)
-        usdt = balances.get("usdt", 0.0)
         native = balances.get("native", 0.0)
         
+        # Tempo: show all stablecoin balances
+        if chain == "tempo_moderato":
+            pathUSD = balances.get("pathUSD", 0.0)
+            alphaUSD = balances.get("alphaUSD", 0.0)
+            betaUSD = balances.get("betaUSD", 0.0)
+            thetaUSD = balances.get("thetaUSD", 0.0)
+            # Format native balance in scientific notation (Tempo gives huge amounts)
+            native_str = f"{native:.2e}" if native > 1e10 else f"{native:.2f}"
+            print(f"     {chain_label} {native_str} TEMPO (gas)")
+            print(f"                    pathUSD: {pathUSD:.2f} | alphaUSD: {alphaUSD:.2f}")
+            print(f"                    betaUSD: {betaUSD:.2f} | thetaUSD: {thetaUSD:.2f}")
         # BNB chains: show gas warning if low
-        if chain in ("bnb", "bnb_testnet"):
+        elif chain in ("bnb", "bnb_testnet"):
+            usdc = balances.get("usdc", 0.0)
+            usdt = balances.get("usdt", 0.0)
             warning = " ⚠️ Low gas" if native < 0.0005 else ""
             print(f"     {chain_label} {usdc:.2f} USDC | {usdt:.2f} USDT | {native:.4f} BNB{warning}")
         else:
+            usdc = balances.get("usdc", 0.0)
+            usdt = balances.get("usdt", 0.0)
             print(f"     {chain_label} {usdc:.2f} USDC | {usdt:.2f} USDT")
     
     # BNB Approvals (pay-for-success)

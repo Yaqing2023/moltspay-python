@@ -72,7 +72,7 @@ def sign_payment_intent(
 ) -> Dict[str, Any]:
     """Sign EIP-712 payment intent for BNB."""
     nonce = int(time.time() * 1000)
-    deadline = int(time.time()) + 3600  # 1 hour
+    deadline = int(time.time() * 1000) + 3600000  # 1 hour in milliseconds
     
     intent = {
         "from": account.address,

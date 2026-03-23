@@ -190,15 +190,14 @@ def cmd_pay(args):
 
 def cmd_approve(args):
     """Approve spender for BNB chain."""
+    # Default spender is the MoltsPay faucet wallet (also used as BNB facilitator)
+    DEFAULT_SPENDER = "0x145E00f48b98E2829f803Be53418230e47943a8A"
+    
     chain = args.chain
-    spender = args.spender
+    spender = args.spender or DEFAULT_SPENDER
     
     if not chain or not chain.startswith("bnb"):
         print("❌ --chain must be 'bnb' or 'bnb_testnet'")
-        return 1
-    
-    if not spender:
-        print("❌ --spender is required")
         return 1
     
     print(f"\n🔓 Approving {spender[:10]}... on {chain}...\n")
@@ -298,7 +297,7 @@ def main():
     # approve
     approve_parser = subparsers.add_parser("approve", help="Approve spender (BNB)")
     approve_parser.add_argument("--chain", help="BNB chain", required=True)
-    approve_parser.add_argument("--spender", help="Spender address", required=True)
+    approve_parser.add_argument("--spender", help="Spender address (default: MoltsPay faucet)")
     
     args = parser.parse_args()
     

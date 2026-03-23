@@ -1,8 +1,10 @@
 """
 CDP Facilitator - Coinbase Developer Platform x402 payment verification/settlement.
 
+Supports Base, Polygon, and testnets via Coinbase's x402 facilitator service.
+
 Environment variables (from ~/.moltspay/.env):
-    USE_MAINNET=true          - Use Base mainnet (requires CDP keys)
+    USE_MAINNET=true          - Use mainnet endpoints (requires CDP keys)
     CDP_API_KEY_ID=xxx        - Coinbase Developer Platform API key ID
     CDP_API_KEY_SECRET=xxx    - CDP API key secret
 """
@@ -10,7 +12,7 @@ Environment variables (from ~/.moltspay/.env):
 import os
 import json
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 import httpx
 
@@ -21,7 +23,8 @@ try:
 except ImportError:
     HAS_CDP_SDK = False
 
-from .types import X402PaymentPayload, X402PaymentRequirements, VerifyResult, SettleResult, X402_VERSION
+from .base import BaseFacilitator, VerifyResult, SettleResult, HealthCheckResult
+from ..types import X402_VERSION
 
 
 # CDP Facilitator URLs
@@ -56,22 +59,30 @@ def load_env_file() -> None:
                     # Don't override existing env vars
                     if key not in os.environ:
                         os.environ[key] = value
-                print(f"[MoltsPay] Loaded config from {env_path}")
                 break
             except Exception:
                 pass
 
 
-class CDPFacilitator:
+class CDPFacilitator(BaseFacilitator):
     """
     Coinbase Developer Platform x402 Facilitator.
     
     Handles payment verification and settlement via Coinbase's x402 facilitator.
-    Supports both mainnet (Base) and testnet (Base Sepolia).
+    Supports Base, Polygon (mainnet and testnet).
     """
     
-    name = "cdp"
-    display_name = "Coinbase CDP"
+    @property
+    def name(self) -> str:
+        return "cdp"
+    
+    @property
+    def display_name(self) -> str:
+        return "Coinbase CDP"
+    
+    @property
+    def supported_networks(self) -> List[str]:
+        return ["eip155:8453", "eip155:137", "eip155:84532"]
     
     def __init__(
         self,
@@ -102,12 +113,6 @@ class CDPFacilitator:
         # Set endpoint
         self.endpoint = CDP_MAINNET_URL if use_mainnet else CDP_TESTNET_URL
         
-        # Supported networks
-        self.supported_networks = (
-            ["eip155:8453"] if use_mainnet 
-            else ["eip155:8453", "eip155:84532"]
-        )
-        
         # HTTP client
         self._client = httpx.Client(timeout=30.0)
         
@@ -135,13 +140,8 @@ class CDPFacilitator:
         url_path: str,
         body: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, str]:
-        """
-        Generate authentication headers for CDP API requests.
-        
-        Uses the official CDP SDK for JWT-based authentication.
-        """
+        """Generate authentication headers for CDP API requests."""
         if not self.use_mainnet:
-            # Testnet (x402.org) doesn't require auth
             return {}
         
         if not HAS_CDP_SDK:
@@ -150,7 +150,6 @@ class CDPFacilitator:
         if not self.api_key_id or not self.api_key_secret:
             raise ValueError("CDP credentials required for mainnet")
         
-        # Use CDP SDK to generate auth headers
         headers = get_auth_headers(GetAuthHeadersOptions(
             api_key_id=self.api_key_id,
             api_key_secret=self.api_key_secret,
@@ -162,39 +161,17 @@ class CDPFacilitator:
         
         return headers
     
-    def verify(
+    async def verify(
         self,
-        payment_payload: X402PaymentPayload,
-        requirements: X402PaymentRequirements,
+        payment_payload: Dict[str, Any],
+        requirements: Dict[str, Any],
     ) -> VerifyResult:
-        """
-        Verify payment signature with CDP facilitator.
-        
-        Args:
-            payment_payload: The x402 payment payload from client
-            requirements: The payment requirements for this service
-            
-        Returns:
-            VerifyResult with verification status
-        """
+        """Verify payment signature with CDP facilitator."""
         try:
             request_body = {
                 "x402Version": X402_VERSION,
-                "paymentPayload": {
-                    "x402Version": payment_payload.x402Version,
-                    "payload": payment_payload.payload,
-                    "accepted": payment_payload.accepted,
-                    "resource": payment_payload.resource,
-                },
-                "paymentRequirements": {
-                    "scheme": requirements.scheme,
-                    "network": requirements.network,
-                    "asset": requirements.asset,
-                    "amount": requirements.amount,
-                    "payTo": requirements.payTo,
-                    "maxTimeoutSeconds": requirements.maxTimeoutSeconds,
-                    "extra": requirements.extra,
-                },
+                "paymentPayload": payment_payload,
+                "paymentRequirements": requirements,
             }
             
             headers = {"Content-Type": "application/json"}
@@ -220,55 +197,24 @@ class CDPFacilitator:
                     valid=False,
                     error=result.get("invalidReason") or result.get("error") or "Verification failed",
                     details=result,
-                    facilitator=self.name,
                 )
             
-            return VerifyResult(
-                valid=True,
-                details=result,
-                facilitator=self.name,
-            )
+            return VerifyResult(valid=True, details=result)
             
         except Exception as e:
-            return VerifyResult(
-                valid=False,
-                error=f"Facilitator error: {e}",
-                facilitator=self.name,
-            )
+            return VerifyResult(valid=False, error=f"Facilitator error: {e}")
     
-    def settle(
+    async def settle(
         self,
-        payment_payload: X402PaymentPayload,
-        requirements: X402PaymentRequirements,
+        payment_payload: Dict[str, Any],
+        requirements: Dict[str, Any],
     ) -> SettleResult:
-        """
-        Settle payment on-chain via CDP facilitator.
-        
-        Args:
-            payment_payload: The x402 payment payload from client
-            requirements: The payment requirements for this service
-            
-        Returns:
-            SettleResult with settlement status and transaction hash
-        """
+        """Settle payment on-chain via CDP facilitator."""
         try:
             request_body = {
                 "x402Version": X402_VERSION,
-                "paymentPayload": {
-                    "x402Version": payment_payload.x402Version,
-                    "payload": payment_payload.payload,
-                    "accepted": payment_payload.accepted,
-                    "resource": payment_payload.resource,
-                },
-                "paymentRequirements": {
-                    "scheme": requirements.scheme,
-                    "network": requirements.network,
-                    "asset": requirements.asset,
-                    "amount": requirements.amount,
-                    "payTo": requirements.payTo,
-                    "maxTimeoutSeconds": requirements.maxTimeoutSeconds,
-                    "extra": requirements.extra,
-                },
+                "paymentPayload": payment_payload,
+                "paymentRequirements": requirements,
             }
             
             headers = {"Content-Type": "application/json"}
@@ -293,37 +239,27 @@ class CDPFacilitator:
                 return SettleResult(
                     success=False,
                     error=result.get("error") or result.get("errorReason") or "Settlement failed",
-                    facilitator=self.name,
                 )
             
             return SettleResult(
                 success=True,
                 transaction=result.get("transaction"),
                 status=result.get("status", "settled"),
-                facilitator=self.name,
             )
             
         except Exception as e:
-            return SettleResult(
-                success=False,
-                error=f"Settlement error: {e}",
-                facilitator=self.name,
-            )
+            return SettleResult(success=False, error=f"Settlement error: {e}")
     
-    def health_check(self) -> Dict[str, Any]:
+    async def health_check(self) -> HealthCheckResult:
         """Check if facilitator is reachable."""
+        import time
+        start = time.time()
         try:
-            # Simple connectivity check
             response = self._client.head(
                 self.endpoint.replace("/x402", ""),
                 timeout=5.0,
             )
-            return {"healthy": True, "status_code": response.status_code}
+            latency = int((time.time() - start) * 1000)
+            return HealthCheckResult(healthy=True, latency_ms=latency)
         except Exception as e:
-            return {"healthy": False, "error": str(e)}
-    
-    def get_config_summary(self) -> str:
-        """Get configuration summary for logging."""
-        mode = "mainnet" if self.use_mainnet else "testnet"
-        has_creds = bool(self.api_key_id and self.api_key_secret)
-        return f"CDP Facilitator ({mode}, credentials: {'yes' if has_creds else 'no'})"
+            return HealthCheckResult(healthy=False, error=str(e))
