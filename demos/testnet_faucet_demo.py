@@ -114,6 +114,8 @@ def main():
         print(f"✓ Received {result.amount} {info['token']}!")
         if result.tx_hash:
             print(f"  TX: {result.tx_hash}")
+        print()
+        print("💡 Run 'python demos/wallet_status_demo.py' to verify your new balance")
     else:
         print(f"✗ Faucet request failed: {result.error}")
         if "rate" in str(result.error).lower() or "24" in str(result.error):
@@ -128,21 +130,6 @@ def main():
             print()
             print("💡 Alternative: Use BNB Chain Faucet")
             print("   https://www.bnbchain.org/en/testnet-faucet")
-    print()
-    
-    # --- Step 4: Verify New Balance ---
-    print("Step 4: Verify New Balance")
-    print("-" * 40)
-    
-    if chain == "solana_devnet":
-        balances = client.get_solana_balances("solana_devnet")
-        print(f"  SOL:  {balances['sol']:.4f}")
-        print(f"  USDC: {balances['usdc']:.2f}")
-    else:
-        balance = client.balance(chain)
-        print(f"  USDC: {balance.usdc:.2f}")
-        if chain == "bnb_testnet":
-            print(f"  tBNB: {balance.eth:.4f}")
     print()
     
     # --- Next Steps ---
