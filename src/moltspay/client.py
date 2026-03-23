@@ -1,6 +1,7 @@
 """MoltsPay client - main interface."""
 
-from typing import Any, Optional, List
+from typing import Any, Optional, List, Dict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import httpx
 
 from .wallet import Wallet
@@ -8,6 +9,17 @@ from .x402 import X402Client, AsyncX402Client
 from .models import Service, Balance, Limits, PaymentResult, TokenSymbol, FundingResult, FaucetResult
 from .exceptions import InsufficientFunds, LimitExceeded, PaymentError
 from .chains import CHAINS, get_protocol
+
+# ERC20 ABI for balanceOf
+ERC20_BALANCE_ABI = [
+    {
+        "inputs": [{"name": "account", "type": "address"}],
+        "name": "balanceOf",
+        "outputs": [{"name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function"
+    }
+]
 
 # Lazy import for Solana (optional dependency)
 _solana_wallet_module = None
@@ -130,21 +142,170 @@ class MoltsPay:
         """
         return self._x402.discover_services(service_url)
     
-    def balance(self) -> Balance:
+    def balance(self, chain: str = None) -> Balance:
         """
-        Get wallet balance.
+        Get wallet balance on a specific chain.
         
-        Note: This requires RPC call. For now returns placeholder.
-        TODO: Implement actual balance check via RPC.
+        Args:
+            chain: Chain to query (default: client's chain)
+        
+        Returns:
+            Balance object with USDC, USDT, and native token amounts
         """
-        # TODO: Query actual balance from chain
+        chain = chain or self._chain
+        
+        # Solana chains use different balance query
+        if self._is_solana_chain(chain):
+            balances = self.get_solana_balances(chain)
+            return Balance(
+                address=self.solana_address or "",
+                usdc=balances.get("usdc", 0.0),
+                usdt=0.0,  # Solana doesn't have USDT in our config
+                eth=balances.get("sol", 0.0),  # SOL as native
+                chain=chain,
+            )
+        
+        # EVM chains
+        balances = self._get_chain_balance(chain)
         return Balance(
-            address=self._wallet.address,
-            usdc=0.0,  # Placeholder
-            usdt=0.0,  # Placeholder
-            eth=0.0,   # Placeholder
-            chain=self._chain,
+            address=self.evm_address,
+            usdc=balances.get("usdc", 0.0),
+            usdt=balances.get("usdt", 0.0),
+            eth=balances.get("native", 0.0),
+            chain=chain,
         )
+    
+    def _get_chain_balance(self, chain: str) -> Dict[str, float]:
+        """
+        Query token balances on an EVM chain via RPC.
+        
+        Returns:
+            Dict with 'usdc', 'usdt', 'native' balances
+        """
+        chain_config = CHAINS.get(chain)
+        if not chain_config:
+            return {"usdc": 0.0, "usdt": 0.0, "native": 0.0}
+        
+        try:
+            from web3 import Web3
+            
+            w3 = Web3(Web3.HTTPProvider(chain_config["rpc"]))
+            address = Web3.to_checksum_address(self.evm_address)
+            
+            # Get native balance
+            native_wei = w3.eth.get_balance(address)
+            native = float(w3.from_wei(native_wei, 'ether'))
+            
+            # Get USDC balance
+            usdc = 0.0
+            usdc_config = chain_config.get("tokens", {}).get("USDC")
+            if usdc_config:
+                usdc_contract = w3.eth.contract(
+                    address=Web3.to_checksum_address(usdc_config["address"]),
+                    abi=ERC20_BALANCE_ABI
+                )
+                usdc_raw = usdc_contract.functions.balanceOf(address).call()
+                usdc = usdc_raw / (10 ** usdc_config["decimals"])
+            
+            # Get USDT balance (if available)
+            usdt = 0.0
+            usdt_config = chain_config.get("tokens", {}).get("USDT")
+            if usdt_config:
+                usdt_contract = w3.eth.contract(
+                    address=Web3.to_checksum_address(usdt_config["address"]),
+                    abi=ERC20_BALANCE_ABI
+                )
+                usdt_raw = usdt_contract.functions.balanceOf(address).call()
+                usdt = usdt_raw / (10 ** usdt_config["decimals"])
+            
+            return {"usdc": usdc, "usdt": usdt, "native": native}
+            
+        except Exception as e:
+            # Return zeros if query fails
+            return {"usdc": 0.0, "usdt": 0.0, "native": 0.0}
+    
+    def get_all_balances(self) -> Dict[str, Dict[str, float]]:
+        """
+        Get wallet balances on all supported chains.
+        
+        Queries all EVM chains in parallel for speed.
+        
+        Returns:
+            Dict mapping chain name to balance dict:
+            {
+                "base": {"usdc": 10.0, "usdt": 0.0, "native": 0.001},
+                "polygon": {"usdc": 5.0, "usdt": 0.0, "native": 0.0},
+                ...
+            }
+        """
+        evm_chains = ["base", "polygon", "base_sepolia", "bnb", "bnb_testnet"]
+        results = {}
+        
+        # Query EVM chains in parallel
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {
+                executor.submit(self._get_chain_balance, chain): chain 
+                for chain in evm_chains
+            }
+            for future in as_completed(futures):
+                chain = futures[future]
+                try:
+                    results[chain] = future.result()
+                except Exception:
+                    results[chain] = {"usdc": 0.0, "usdt": 0.0, "native": 0.0}
+        
+        return results
+    
+    def get_solana_balances(self, chain: str = "solana_devnet") -> Dict[str, float]:
+        """
+        Get Solana wallet balances (SOL + USDC).
+        
+        Args:
+            chain: "solana" or "solana_devnet"
+        
+        Returns:
+            Dict with 'sol' and 'usdc' balances
+        """
+        try:
+            solana_addr = self.solana_address
+            if not solana_addr:
+                return {"sol": 0.0, "usdc": 0.0}
+            
+            chain_config = CHAINS.get(chain)
+            if not chain_config:
+                return {"sol": 0.0, "usdc": 0.0}
+            
+            from solana.rpc.api import Client as SolanaClient
+            from solders.pubkey import Pubkey
+            
+            client = SolanaClient(chain_config["rpc"])
+            pubkey = Pubkey.from_string(solana_addr)
+            
+            # Get SOL balance
+            sol_resp = client.get_balance(pubkey)
+            sol = sol_resp.value / 1e9 if sol_resp.value else 0.0
+            
+            # Get USDC balance (SPL token)
+            usdc = 0.0
+            usdc_config = chain_config.get("tokens", {}).get("USDC")
+            if usdc_config:
+                from spl.token.instructions import get_associated_token_address
+                
+                usdc_mint = Pubkey.from_string(usdc_config["address"])
+                ata = get_associated_token_address(pubkey, usdc_mint)
+                
+                try:
+                    token_resp = client.get_token_account_balance(ata)
+                    if token_resp.value:
+                        usdc = float(token_resp.value.ui_amount or 0)
+                except Exception:
+                    # ATA might not exist yet
+                    usdc = 0.0
+            
+            return {"sol": sol, "usdc": usdc}
+            
+        except Exception as e:
+            return {"sol": 0.0, "usdc": 0.0}
     
     def limits(self) -> Limits:
         """Get current spending limits."""
